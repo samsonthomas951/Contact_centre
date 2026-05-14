@@ -35,6 +35,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
+	"github.com/samsonthomas951/contact-centre/internal/connector/voice"
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
 	"github.com/samsonthomas951/contact-centre/internal/connector/widget"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
@@ -143,6 +144,7 @@ type routerDeps struct {
 	WA         *whatsapp.WebhookHandler
 	IG         *instagram.WebhookHandler
 	Widget     *widget.WebsocketHandler
+	Voice      *voice.WebhookHandler
 	Docs       *document.API
 	Supervisor *supervisor.API
 	Analytics  *analytics.API
@@ -153,9 +155,9 @@ type routerDeps struct {
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, wg, docs, sup, ana, onb, ds :=
+	v, tr, p, fb, x, wa, ig, wg, vc, docs, sup, ana, onb, ds :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Widget,
-		d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR
+		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -205,6 +207,12 @@ func newRouter(d routerDeps) http.Handler {
 		// snippet can hardcode the path. The connector validates the
 		// Origin header against widget_sites itself; no bearer.
 		r.Method(http.MethodGet, "/ws/widget", wg)
+	}
+	if vc != nil {
+		// Carrier callback for the voice connector. The {secret} path
+		// param is the per-tenant rotating value stored on
+		// voice_numbers. Africa's Talking posts form-encoded.
+		r.Method(http.MethodPost, "/v1/voice/at/{secret}", vc)
 	}
 
 	// Authenticated v1 surface.

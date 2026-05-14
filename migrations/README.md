@@ -19,6 +19,7 @@ the down then the up again to verify reversibility.
 | 0011 | `mart_tickets_daily`, `mart_agents_daily`, `mart_cursor` — analytics rollup tables |
 | 0012 | `dsr_requests`, `dsr_actions` + `dsr_kind`/`dsr_state` enums — DPA s.26/s.40 request lifecycle |
 | 0013 | `widget_sites`, `widget_visitors` — embeddable web widget origins + anonymous-visitor map |
+| 0014 | `voice_numbers`, `voice_calls` + `voice_call_state` enum — Africa's Talking / Twilio voice connector |
 
 ## Running
 
