@@ -1,0 +1,45 @@
+# Binaries
+bin/
+dist/
+*.exe
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# Coverage
+coverage.txt
+coverage.html
+*.cover
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+deploy/secrets/*
+!deploy/secrets/.gitkeep
+!deploy/secrets/*.example
+acme.json
+
+# Local data
+data/
+tmp/
+*.log
+
+# Generated
+internal/**/db/*.sql.go
+internal/**/db/models.go
+internal/**/db/querier.go
+api/gen/
+
+# Docker
+docker-compose.override.yml
