@@ -36,6 +36,7 @@ import (
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/document"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
+	"github.com/samsonthomas951/contact-centre/internal/supervisor"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/logging"
@@ -92,9 +93,10 @@ func run() error {
 	// serves the rest. Real wiring (NATS, tenant resolver) lands when
 	// the dedicated FB connector binary is extracted in a later phase.
 	r := newRouter(routerDeps{
-		Verifier: verifier,
-		Tickets:  ticket.NewRepo(pool),
-		Pinger:   pool,
+		Verifier:   verifier,
+		Tickets:    ticket.NewRepo(pool),
+		Pinger:     pool,
+		Supervisor: &supervisor.API{Repo: supervisor.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -114,18 +116,20 @@ const readyzTimeout = 2 * time.Second
 // lets the binary boot without optional dependencies (FB credentials,
 // MinIO, etc.) wired up.
 type routerDeps struct {
-	Verifier *auth.Verifier
-	Tickets  *ticket.Repo
-	Pinger   pinger
-	FB       *facebook.WebhookHandler
-	X        *xconn.WebhookHandler
-	Docs     *document.API
+	Verifier   *auth.Verifier
+	Tickets    *ticket.Repo
+	Pinger     pinger
+	FB         *facebook.WebhookHandler
+	X          *xconn.WebhookHandler
+	Docs       *document.API
+	Supervisor *supervisor.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, docs := d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.Docs
+	v, tr, p, fb, x, docs, sup :=
+		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.Docs, d.Supervisor
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -170,6 +174,9 @@ func newRouter(d routerDeps) http.Handler {
 		r.Mount("/tickets", (&ticket.API{Repo: tr}).Routes())
 		if docs != nil {
 			r.Mount("/documents", docs.Routes())
+		}
+		if sup != nil {
+			r.Mount("/supervisor", sup.Routes())
 		}
 	})
 
