@@ -1,0 +1,41 @@
+cloudnative-pg:
+  enabled: true
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    sentinel: false
+  master:
+    persistence:
+      enabled: true
+      size: 8Gi
+nats:
+  enabled: true
+  config:
+    cluster:
+      enabled: true
+      replicas: 3
+    jetstream:
+      enabled: true
+      fileStore:
+        enabled: true
+        pvc:
+          size: 20Gi
+minio-operator:
+  enabled: true
+traefik:
+  enabled: true
+  ingressClass:
+    enabled: true
+    isDefaultClass: true
+  service:
+    type: LoadBalancer
+external-secrets:
+  enabled: true
+  installCRDs: true
+zitadel:
+  enabled: true
+  zitadel:
+    masterkeySecretName: zitadel-masterkey
+    configmapConfig:
+      ExternalSecure: true

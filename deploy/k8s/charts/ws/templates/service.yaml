@@ -1,0 +1,42 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "ws.fullname" . }}
+  labels: {{- include "ws.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector: {{- include "ws.selectorLabels" . | nindent 4 }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "ws.fullname" . }}
+  labels: {{- include "ws.labels" . | nindent 4 }}
+  annotations:
+    # Traefik tunings: WS upgrades plus a generous read timeout so
+    # idle agent sockets aren't reaped mid-conversation.
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts: ["{{ .Values.ingress.host }}"]
+      secretName: {{ include "ws.fullname" . }}-tls
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "ws.fullname" . }}
+                port:
+                  number: {{ .Values.service.port }}

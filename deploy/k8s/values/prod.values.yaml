@@ -1,0 +1,34 @@
+# Production overrides. The platform chart's defaults already match
+# our production posture; this file pins host names and ramps replica
+# counts where Phase-3 SLOs require headroom.
+
+gateway:
+  ingress:
+    host: app.example.co.ke
+  replicaCount: 3
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 8
+
+ws:
+  ingress:
+    host: ws.example.co.ke
+  replicaCount: 3
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 12
+    targetWSConnectionsPerReplica: 5000
+
+platform:
+  redis:
+    master:
+      persistence:
+        size: 16Gi
+  nats:
+    config:
+      cluster:
+        replicas: 3
+      jetstream:
+        fileStore:
+          pvc:
+            size: 50Gi

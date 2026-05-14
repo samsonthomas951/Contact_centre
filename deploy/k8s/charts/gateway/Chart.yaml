@@ -1,0 +1,9 @@
+apiVersion: v2
+name: gateway
+description: HTTP API gateway for the contact-centre platform
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+maintainers:
+  - name: ops
+    email: ops@example.co.ke

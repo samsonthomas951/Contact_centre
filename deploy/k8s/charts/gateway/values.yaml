@@ -1,0 +1,59 @@
+image:
+  repository: ghcr.io/samsonthomas951/contact-centre/gateway
+  tag: ""              # falls back to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 200m
+    memory: 256Mi
+  limits:
+    cpu: 1000m
+    memory: 768Mi
+
+# Pulled from Vault via External Secrets Operator. The chart only
+# references the resulting Kubernetes Secret name.
+secrets:
+  externalName: gateway-secrets        # contains DATABASE_URL, OIDC creds
+
+env:
+  HTTP_ADDR: ":8080"
+  OIDC_ISSUER_URL: "https://auth.example.co.ke"
+  OIDC_AUDIENCE: "contact-centre"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: app.example.co.ke
+  tls: true                            # via cert-manager + Let's Encrypt
+
+# Per the README's hardening checklist.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

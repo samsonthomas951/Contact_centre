@@ -1,0 +1,37 @@
+# Staging overrides. Smaller resources, lower replica counts, public
+# host names under *.staging.example.co.ke.
+
+gateway:
+  ingress:
+    host: app.staging.example.co.ke
+  replicaCount: 2
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits:   { cpu: 500m, memory: 384Mi }
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 3
+
+ws:
+  ingress:
+    host: ws.staging.example.co.ke
+  replicaCount: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits:   { cpu: 1000m, memory: 1Gi }
+  autoscaling:
+    minReplicas: 1
+    maxReplicas: 3
+    targetWSConnectionsPerReplica: 1000
+
+platform:
+  redis:
+    master:
+      persistence:
+        size: 2Gi
+  nats:
+    config:
+      jetstream:
+        fileStore:
+          pvc:
+            size: 5Gi

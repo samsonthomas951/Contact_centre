@@ -1,0 +1,68 @@
+image:
+  repository: ghcr.io/samsonthomas951/contact-centre/ws
+  tag: ""
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+
+secrets:
+  externalName: ws-secrets
+
+env:
+  HTTP_ADDR: ":8081"
+  OIDC_ISSUER_URL: "https://auth.example.co.ke"
+  OIDC_AUDIENCE: "contact-centre"
+  REDIS_ADDR: "redis-master:6379"
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8081
+
+ingress:
+  enabled: true
+  className: traefik
+  host: ws.example.co.ke
+  tls: true
+
+# Same hardened pod context as the gateway.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+# WebSocket file-descriptor headroom -- the WS service holds long-lived
+# connections so we lift the per-pod ulimit.
+ulimits:
+  fileDescriptors: 1048576
+
+# Custom-metric HPA driven by the per-pod ws_connections gauge. The
+# Prometheus Adapter must be installed and configured to expose
+# `pod_metric:ws_connections:gauge`. Falls back to CPU target when the
+# custom metric isn't available.
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetWSConnectionsPerReplica: 5000
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

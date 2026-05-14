@@ -1,0 +1,36 @@
+apiVersion: v2
+name: platform
+description: Umbrella chart that pulls Postgres (CNPG), Redis, NATS, MinIO, Zitadel, Traefik and External Secrets into one release.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: cloudnative-pg
+    version: 0.22.x
+    repository: https://cloudnative-pg.github.io/charts
+    condition: cloudnative-pg.enabled
+  - name: redis
+    version: 19.x.x
+    repository: https://charts.bitnami.com/bitnami
+    condition: redis.enabled
+  - name: nats
+    version: 1.x.x
+    repository: https://nats-io.github.io/k8s/helm/charts/
+    condition: nats.enabled
+  - name: minio-operator
+    version: 5.x.x
+    repository: https://operator.min.io/
+    condition: minio-operator.enabled
+  - name: traefik
+    version: 28.x.x
+    repository: https://traefik.github.io/charts
+    condition: traefik.enabled
+  - name: external-secrets
+    version: 0.x.x
+    repository: https://charts.external-secrets.io
+    condition: external-secrets.enabled
+  - name: zitadel
+    version: 8.x.x
+    repository: https://charts.zitadel.com
+    condition: zitadel.enabled
