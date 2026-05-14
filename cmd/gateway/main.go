@@ -36,6 +36,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
+	"github.com/samsonthomas951/contact-centre/internal/connector/widget"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/document"
 	"github.com/samsonthomas951/contact-centre/internal/dsr"
@@ -108,6 +109,13 @@ func run() error {
 			Agents:  onboarding.NewAgentRepo(pool),
 		},
 		DSR: &dsr.API{Repo: dsr.NewRepo(pool)},
+		// JS is left nil so the widget handler 5xx's when JetStream is
+		// not wired; production assignment lands when the connector
+		// gets its own binary.
+		Widget: &widget.WebsocketHandler{
+			Sites:    widget.NewPGSiteLookup(pool),
+			Visitors: widget.NewPGVisitorStore(pool),
+		},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -134,6 +142,7 @@ type routerDeps struct {
 	X          *xconn.WebhookHandler
 	WA         *whatsapp.WebhookHandler
 	IG         *instagram.WebhookHandler
+	Widget     *widget.WebsocketHandler
 	Docs       *document.API
 	Supervisor *supervisor.API
 	Analytics  *analytics.API
@@ -144,9 +153,9 @@ type routerDeps struct {
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, docs, sup, ana, onb, ds :=
-		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Docs,
-		d.Supervisor, d.Analytics, d.Onboarding, d.DSR
+	v, tr, p, fb, x, wa, ig, wg, docs, sup, ana, onb, ds :=
+		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Widget,
+		d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -190,6 +199,12 @@ func newRouter(d routerDeps) http.Handler {
 	if ig != nil {
 		r.Method(http.MethodGet, "/v1/ig/webhook", ig)
 		r.Method(http.MethodPost, "/v1/ig/webhook", ig)
+	}
+	if wg != nil {
+		// Widget WS lives at /ws/widget (no /v1 prefix) so the JS
+		// snippet can hardcode the path. The connector validates the
+		// Origin header against widget_sites itself; no bearer.
+		r.Method(http.MethodGet, "/ws/widget", wg)
 	}
 
 	// Authenticated v1 surface.

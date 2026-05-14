@@ -18,6 +18,7 @@ the down then the up again to verify reversibility.
 | 0010 | `ig_accounts` Path-1/Path-2 token vault, `ig_webhook_events` dedupe |
 | 0011 | `mart_tickets_daily`, `mart_agents_daily`, `mart_cursor` — analytics rollup tables |
 | 0012 | `dsr_requests`, `dsr_actions` + `dsr_kind`/`dsr_state` enums — DPA s.26/s.40 request lifecycle |
+| 0013 | `widget_sites`, `widget_visitors` — embeddable web widget origins + anonymous-visitor map |
 
 ## Running
 
