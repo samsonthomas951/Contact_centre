@@ -33,6 +33,7 @@ import (
 
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
+	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
@@ -89,7 +90,7 @@ func run() error {
 	// secrets; without them we leave it unmounted and the gateway still
 	// serves the rest. Real wiring (NATS, tenant resolver) lands when
 	// the dedicated FB connector binary is extracted in a later phase.
-	r := newRouter(verifier, ticket.NewRepo(pool), pool, nil)
+	r := newRouter(verifier, ticket.NewRepo(pool), pool, nil, nil)
 	return httpserver.Run(ctx, httpCfg, r)
 }
 
@@ -105,7 +106,9 @@ const readyzTimeout = 2 * time.Second
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
-func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger, fb *facebook.WebhookHandler) http.Handler {
+func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger,
+	fb *facebook.WebhookHandler, x *xconn.WebhookHandler,
+) http.Handler {
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -137,6 +140,10 @@ func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger, fb *facebook.Webhook
 	if fb != nil {
 		r.Method(http.MethodGet, "/v1/fb/webhook", fb)
 		r.Method(http.MethodPost, "/v1/fb/webhook", fb)
+	}
+	if x != nil {
+		r.Method(http.MethodGet, "/v1/x/webhook", x)
+		r.Method(http.MethodPost, "/v1/x/webhook", x)
 	}
 
 	// Authenticated v1 surface.

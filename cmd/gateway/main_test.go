@@ -27,7 +27,7 @@ func TestRouter_HealthAndReady(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newRouter(nil, nil, stubPinger{err: tc.ping}, nil)
+			h := newRouter(nil, nil, stubPinger{err: tc.ping}, nil, nil)
 			rr := httptest.NewRecorder()
 			h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, tc.path, nil))
 			if rr.Code != tc.status {
@@ -40,7 +40,7 @@ func TestRouter_HealthAndReady(t *testing.T) {
 func TestRouter_V1RequiresAuth(t *testing.T) {
 	// Passing a nil Verifier is fine — the middleware short-circuits on
 	// the missing Authorization header before calling Verify.
-	h := newRouter(nil, nil, stubPinger{}, nil)
+	h := newRouter(nil, nil, stubPinger{}, nil, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/me", nil))
 	if rr.Code != http.StatusUnauthorized {
@@ -49,7 +49,7 @@ func TestRouter_V1RequiresAuth(t *testing.T) {
 }
 
 func TestRouter_MetricsExposed(t *testing.T) {
-	h := newRouter(nil, nil, stubPinger{}, nil)
+	h := newRouter(nil, nil, stubPinger{}, nil, nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if rr.Code != http.StatusOK {

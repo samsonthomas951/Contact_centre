@@ -114,10 +114,12 @@ jobs:
           set -euo pipefail
           UPS=(migrations/0001_init.up.sql migrations/0002_agents.up.sql \
                migrations/0003_customers.up.sql migrations/0004_tickets.up.sql \
-               migrations/0005_audit.up.sql migrations/0006_connectors.up.sql)
-          DOWNS=(migrations/0006_connectors.down.sql migrations/0005_audit.down.sql \
-                 migrations/0004_tickets.down.sql migrations/0003_customers.down.sql \
-                 migrations/0002_agents.down.sql migrations/0001_init.down.sql)
+               migrations/0005_audit.up.sql migrations/0006_connectors.up.sql \
+               migrations/0007_x_connector.up.sql)
+          DOWNS=(migrations/0007_x_connector.down.sql migrations/0006_connectors.down.sql \
+                 migrations/0005_audit.down.sql migrations/0004_tickets.down.sql \
+                 migrations/0003_customers.down.sql migrations/0002_agents.down.sql \
+                 migrations/0001_init.down.sql)
           run() { psql -h localhost -p 5432 -U postgres -d revtest -v ON_ERROR_STOP=1 -f "$1" >/dev/null; }
           for f in "${UPS[@]}";   do echo "UP   $f";  run "$f"; done
           for f in "${DOWNS[@]}"; do echo "DOWN $f";  run "$f"; done
