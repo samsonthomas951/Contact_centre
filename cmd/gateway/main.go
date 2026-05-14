@@ -38,6 +38,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/document"
+	"github.com/samsonthomas951/contact-centre/internal/dsr"
 	"github.com/samsonthomas951/contact-centre/internal/onboarding"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/supervisor"
@@ -106,6 +107,7 @@ func run() error {
 			Tenants: onboarding.NewTenantRepo(pool),
 			Agents:  onboarding.NewAgentRepo(pool),
 		},
+		DSR: &dsr.API{Repo: dsr.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -136,14 +138,15 @@ type routerDeps struct {
 	Supervisor *supervisor.API
 	Analytics  *analytics.API
 	Onboarding *onboarding.API
+	DSR        *dsr.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, docs, sup, ana, onb :=
+	v, tr, p, fb, x, wa, ig, docs, sup, ana, onb, ds :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Docs,
-		d.Supervisor, d.Analytics, d.Onboarding
+		d.Supervisor, d.Analytics, d.Onboarding, d.DSR
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -205,6 +208,9 @@ func newRouter(d routerDeps) http.Handler {
 		}
 		if onb != nil {
 			r.Mount("/onboarding", onb.Routes())
+		}
+		if ds != nil {
+			r.Mount("/dsr", ds.Routes())
 		}
 	})
 
