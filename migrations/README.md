@@ -13,6 +13,7 @@ the down then the up again to verify reversibility.
 | 0005 | Hash-chained partitioned `audit_events`, `audit_anchors`, `audit_writer`/`audit_reader` roles |
 | 0006 | `fb_pages` token vault, `fb_webhook_events` dedupe |
 | 0007 | `x_accounts` token vault (OAuth1 + OAuth2 PKCE), `x_webhook_events` dedupe |
+| 0008 | `documents` metadata, `document_holds` (legal-hold suspension of retention), `documents_purgeable` view |
 
 ## Running
 
