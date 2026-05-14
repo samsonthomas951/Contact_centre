@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  # Tracks the minimum Go version declared in go.mod. The plan calls
+  # for 1.23+; bump deliberately when the language features we rely on
+  # require it.
+  GO_VERSION: "1.25"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          args: --timeout=5m
+
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run tests with race + coverage
+        run: |
+          go test -race -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  integration-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: cctest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: Run integration tests
+        env:
+          AUDIT_TEST_DB_URL:  postgres://postgres:test@localhost:5432/cctest?sslmode=disable
+          TICKET_TEST_DB_URL: postgres://postgres:test@localhost:5432/cctest?sslmode=disable
+        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/...
+
+  migrations-reversibility:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: revtest
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply up -> down -> up
+        env:
+          PGPASSWORD: test
+        run: |
+          set -euo pipefail
+          UPS=(migrations/0001_init.up.sql migrations/0002_agents.up.sql \
+               migrations/0003_customers.up.sql migrations/0004_tickets.up.sql \
+               migrations/0005_audit.up.sql migrations/0006_connectors.up.sql)
+          DOWNS=(migrations/0006_connectors.down.sql migrations/0005_audit.down.sql \
+                 migrations/0004_tickets.down.sql migrations/0003_customers.down.sql \
+                 migrations/0002_agents.down.sql migrations/0001_init.down.sql)
+          run() { psql -h localhost -p 5432 -U postgres -d revtest -v ON_ERROR_STOP=1 -f "$1" >/dev/null; }
+          for f in "${UPS[@]}";   do echo "UP   $f";  run "$f"; done
+          for f in "${DOWNS[@]}"; do echo "DOWN $f";  run "$f"; done
+          for f in "${UPS[@]}";   do echo "UP2  $f";  run "$f"; done
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build all binaries
+        run: go build -trimpath -o bin/ ./cmd/...
+      - name: Verify go.mod is tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum

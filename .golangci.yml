@@ -1,0 +1,38 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - misspell
+    - revive
+    - bodyclose
+    - errorlint
+    - gosec
+    - nilerr
+    - prealloc
+    - sloglint
+
+linters-settings:
+  errcheck:
+    check-blank: false
+    exclude-functions:
+      - (net/http.ResponseWriter).Write
+      - (io.Closer).Close
+  gosec:
+    excludes:
+      - G304 # ReadFile with non-const path -- migrations are repo-relative
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec, prealloc, errcheck]
+    - path: writer_integration_test\.go
+      linters: [errcheck]

@@ -15,7 +15,7 @@ Multi-channel social-media contact-centre platform for Kenyan brands. Built in G
 
 | Concern | Choice |
 |---|---|
-| Language | Go 1.23+ |
+| Language | Go 1.25+ |
 | HTTP | `chi` v5 |
 | RPC | ConnectRPC |
 | DB | PostgreSQL 16 + `pgx/v5` + `sqlc` |
@@ -57,7 +57,7 @@ Subject to the **Kenya Data Protection Act 2019** + General Regulations 2021. Pr
 
 ## Development
 
-Requires Go 1.23+, Docker, Docker Compose v2, `make`.
+Requires Go 1.25+, Docker, Docker Compose v2, `make`.
 
 ```sh
 make help
