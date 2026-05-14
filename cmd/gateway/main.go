@@ -32,6 +32,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
@@ -84,7 +85,11 @@ func run() error {
 		return err
 	}
 
-	r := newRouter(verifier, ticket.NewRepo(pool), pool)
+	// FB webhook is wired up only when the operator supplies the
+	// secrets; without them we leave it unmounted and the gateway still
+	// serves the rest. Real wiring (NATS, tenant resolver) lands when
+	// the dedicated FB connector binary is extracted in a later phase.
+	r := newRouter(verifier, ticket.NewRepo(pool), pool, nil)
 	return httpserver.Run(ctx, httpCfg, r)
 }
 
@@ -100,7 +105,7 @@ const readyzTimeout = 2 * time.Second
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
-func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger) http.Handler {
+func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger, fb *facebook.WebhookHandler) http.Handler {
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -125,6 +130,14 @@ func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger) http.Handler {
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	r.Method(http.MethodGet, "/metrics", promhttp.Handler())
+
+	// Public connector webhooks — Meta does not send a bearer; this
+	// MUST sit outside the auth-protected /v1 subtree. The handler does
+	// its own HMAC verification.
+	if fb != nil {
+		r.Method(http.MethodGet, "/v1/fb/webhook", fb)
+		r.Method(http.MethodPost, "/v1/fb/webhook", fb)
+	}
 
 	// Authenticated v1 surface.
 	r.Route("/v1", func(r chi.Router) {
