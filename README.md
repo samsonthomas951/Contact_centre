@@ -46,7 +46,7 @@ docs/           ADRs, runbooks, DPIA artefacts
 
 ## Compliance
 
-Subject to the **Kenya Data Protection Act 2019** + General Regulations 2021. Pre-launch checklist:
+Subject to the **Kenya Data Protection Act 2019** + General Regulations 2021. Detailed checklist, DPIA template, and the 72-hour breach runbook live in [`docs/compliance/`](./docs/compliance/). Top-line gates:
 
 - [ ] ODPC registration (Data Controller + Data Processor) — KES 4,000, 24-month validity
 - [ ] DPO appointed
