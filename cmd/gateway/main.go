@@ -34,6 +34,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
+	"github.com/samsonthomas951/contact-centre/internal/document"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
@@ -90,7 +91,11 @@ func run() error {
 	// secrets; without them we leave it unmounted and the gateway still
 	// serves the rest. Real wiring (NATS, tenant resolver) lands when
 	// the dedicated FB connector binary is extracted in a later phase.
-	r := newRouter(verifier, ticket.NewRepo(pool), pool, nil, nil)
+	r := newRouter(routerDeps{
+		Verifier: verifier,
+		Tickets:  ticket.NewRepo(pool),
+		Pinger:   pool,
+	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
 
@@ -104,11 +109,23 @@ type pinger interface {
 // before returning 503.
 const readyzTimeout = 2 * time.Second
 
+// routerDeps groups everything newRouter wires together. Nullable
+// fields skip the corresponding mount; that keeps tests trivial and
+// lets the binary boot without optional dependencies (FB credentials,
+// MinIO, etc.) wired up.
+type routerDeps struct {
+	Verifier *auth.Verifier
+	Tickets  *ticket.Repo
+	Pinger   pinger
+	FB       *facebook.WebhookHandler
+	X        *xconn.WebhookHandler
+	Docs     *document.API
+}
+
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
-func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger,
-	fb *facebook.WebhookHandler, x *xconn.WebhookHandler,
-) http.Handler {
+func newRouter(d routerDeps) http.Handler {
+	v, tr, p, fb, x, docs := d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.Docs
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -151,6 +168,9 @@ func newRouter(v *auth.Verifier, tr *ticket.Repo, p pinger,
 		r.Use(auth.Middleware(v))
 		r.Get("/me", auth.MeHandler)
 		r.Mount("/tickets", (&ticket.API{Repo: tr}).Routes())
+		if docs != nil {
+			r.Mount("/documents", docs.Routes())
+		}
 	})
 
 	return r
