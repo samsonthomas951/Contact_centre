@@ -33,6 +33,7 @@ import (
 
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
+	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/document"
@@ -123,6 +124,7 @@ type routerDeps struct {
 	FB         *facebook.WebhookHandler
 	X          *xconn.WebhookHandler
 	WA         *whatsapp.WebhookHandler
+	IG         *instagram.WebhookHandler
 	Docs       *document.API
 	Supervisor *supervisor.API
 }
@@ -130,8 +132,8 @@ type routerDeps struct {
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, docs, sup :=
-		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.Docs, d.Supervisor
+	v, tr, p, fb, x, wa, ig, docs, sup :=
+		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Docs, d.Supervisor
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -171,6 +173,10 @@ func newRouter(d routerDeps) http.Handler {
 	if wa != nil {
 		r.Method(http.MethodGet, "/v1/wa/webhook", wa)
 		r.Method(http.MethodPost, "/v1/wa/webhook", wa)
+	}
+	if ig != nil {
+		r.Method(http.MethodGet, "/v1/ig/webhook", ig)
+		r.Method(http.MethodPost, "/v1/ig/webhook", ig)
 	}
 
 	// Authenticated v1 surface.

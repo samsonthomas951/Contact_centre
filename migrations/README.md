@@ -15,6 +15,7 @@ the down then the up again to verify reversibility.
 | 0007 | `x_accounts` token vault (OAuth1 + OAuth2 PKCE), `x_webhook_events` dedupe |
 | 0008 | `documents` metadata, `document_holds` (legal-hold suspension of retention), `documents_purgeable` view |
 | 0009 | `wa_phone_numbers` token vault, `wa_templates` approved-template registry, `wa_webhook_events` dedupe |
+| 0010 | `ig_accounts` Path-1/Path-2 token vault, `ig_webhook_events` dedupe |
 
 ## Running
 
