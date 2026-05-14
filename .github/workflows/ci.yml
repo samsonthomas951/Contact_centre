@@ -89,7 +89,8 @@ jobs:
           AUDIT_TEST_DB_URL:   postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           TICKET_TEST_DB_URL:  postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           ROUTING_TEST_DB_URL: postgres://postgres:test@localhost:5432/cctest?sslmode=disable
-        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/...
+          SLA_TEST_DB_URL:     postgres://postgres:test@localhost:5432/cctest?sslmode=disable
+        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/...
 
   migrations-reversibility:
     runs-on: ubuntu-latest

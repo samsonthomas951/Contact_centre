@@ -9,6 +9,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/samsonthomas951/contact-centre/internal/sla"
 )
 
 // ErrNotFound is returned when a row lookup misses.
@@ -33,7 +35,8 @@ type CreateTicketParams struct {
 	RequiredSkills []string
 }
 
-// CreateTicket inserts a new ticket in state=new and returns it.
+// CreateTicket inserts a new ticket in state=new with SLA deadlines
+// derived from the priority's policy, and returns it.
 func (r *Repo) CreateTicket(ctx context.Context, p CreateTicketParams) (*Ticket, error) {
 	if p.Priority == 0 {
 		p.Priority = 3
@@ -41,14 +44,17 @@ func (r *Repo) CreateTicket(ctx context.Context, p CreateTicketParams) (*Ticket,
 	if p.RequiredSkills == nil {
 		p.RequiredSkills = []string{}
 	}
+	now := time.Now().UTC()
+	frDue, resDue := sla.Deadlines(now, p.Priority)
 
 	row := r.pool.QueryRow(ctx, `
-		INSERT INTO tickets (tenant_id, conversation_id, state, priority, required_skills)
-		VALUES ($1, $2, 'new', $3, $4)
+		INSERT INTO tickets (tenant_id, conversation_id, state, priority, required_skills,
+		                     sla_first_response_due, sla_resolution_due)
+		VALUES ($1, $2, 'new', $3, $4, $5, $6)
 		RETURNING id, tenant_id, conversation_id, state, priority, required_skills,
 		          assigned_agent_id, sla_first_response_due, sla_resolution_due,
 		          first_response_at, resolved_at, closed_at, created_at, updated_at`,
-		p.TenantID, p.ConversationID, p.Priority, p.RequiredSkills,
+		p.TenantID, p.ConversationID, p.Priority, p.RequiredSkills, frDue, resDue,
 	)
 	return scanTicket(row)
 }
