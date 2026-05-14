@@ -31,6 +31,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
@@ -99,6 +100,7 @@ func run() error {
 		Tickets:    ticket.NewRepo(pool),
 		Pinger:     pool,
 		Supervisor: &supervisor.API{Repo: supervisor.NewRepo(pool)},
+		Analytics:  &analytics.API{M: analytics.New(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -127,13 +129,14 @@ type routerDeps struct {
 	IG         *instagram.WebhookHandler
 	Docs       *document.API
 	Supervisor *supervisor.API
+	Analytics  *analytics.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, docs, sup :=
-		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Docs, d.Supervisor
+	v, tr, p, fb, x, wa, ig, docs, sup, ana :=
+		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Docs, d.Supervisor, d.Analytics
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -189,6 +192,9 @@ func newRouter(d routerDeps) http.Handler {
 		}
 		if sup != nil {
 			r.Mount("/supervisor", sup.Routes())
+		}
+		if ana != nil {
+			r.Mount("/analytics", ana.Routes())
 		}
 	})
 

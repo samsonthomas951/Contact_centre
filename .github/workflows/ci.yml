@@ -99,8 +99,9 @@ jobs:
           ROUTING_TEST_DB_URL:      postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           SLA_TEST_DB_URL:          postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           SUPERVISOR_TEST_DB_URL:   postgres://postgres:test@localhost:5432/cctest?sslmode=disable
+          ANALYTICS_TEST_DB_URL:    postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           REALTIME_TEST_REDIS_ADDR: localhost:6379
-        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/...
+        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/... ./internal/analytics/...
 
   migrations-reversibility:
     runs-on: ubuntu-latest
@@ -128,12 +129,14 @@ jobs:
                migrations/0003_customers.up.sql migrations/0004_tickets.up.sql \
                migrations/0005_audit.up.sql migrations/0006_connectors.up.sql \
                migrations/0007_x_connector.up.sql migrations/0008_documents.up.sql \
-               migrations/0009_whatsapp.up.sql migrations/0010_instagram.up.sql)
-          DOWNS=(migrations/0010_instagram.down.sql migrations/0009_whatsapp.down.sql \
-                 migrations/0008_documents.down.sql migrations/0007_x_connector.down.sql \
-                 migrations/0006_connectors.down.sql migrations/0005_audit.down.sql \
-                 migrations/0004_tickets.down.sql migrations/0003_customers.down.sql \
-                 migrations/0002_agents.down.sql migrations/0001_init.down.sql)
+               migrations/0009_whatsapp.up.sql migrations/0010_instagram.up.sql \
+               migrations/0011_analytics.up.sql)
+          DOWNS=(migrations/0011_analytics.down.sql migrations/0010_instagram.down.sql \
+                 migrations/0009_whatsapp.down.sql migrations/0008_documents.down.sql \
+                 migrations/0007_x_connector.down.sql migrations/0006_connectors.down.sql \
+                 migrations/0005_audit.down.sql migrations/0004_tickets.down.sql \
+                 migrations/0003_customers.down.sql migrations/0002_agents.down.sql \
+                 migrations/0001_init.down.sql)
           run() { psql -h localhost -p 5432 -U postgres -d revtest -v ON_ERROR_STOP=1 -f "$1" >/dev/null; }
           for f in "${UPS[@]}";   do echo "UP   $f";  run "$f"; done
           for f in "${DOWNS[@]}"; do echo "DOWN $f";  run "$f"; done
