@@ -48,6 +48,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/logging"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/postgres"
+	"github.com/samsonthomas951/contact-centre/internal/pkg/secheaders"
 	"github.com/samsonthomas951/contact-centre/internal/ticket"
 )
 
@@ -161,10 +162,12 @@ func newRouter(d routerDeps) http.Handler {
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
-	// and a per-request access log entry.
+	// hardened security headers (HSTS, CSP, COOP, etc.). Per the
+	// docs/security/pentest-readiness.md checklist.
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(correlation.Middleware)
+	r.Use(secheaders.Middleware(secheaders.Defaults()))
 
 	// Public probes — reachable without a bearer.
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
