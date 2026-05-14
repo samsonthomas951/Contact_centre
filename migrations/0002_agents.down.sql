@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS agent_status;
+DROP TABLE IF EXISTS agent_skills;
+DROP TABLE IF EXISTS agents;

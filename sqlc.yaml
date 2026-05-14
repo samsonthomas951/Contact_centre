@@ -1,0 +1,76 @@
+version: "2"
+sql:
+  - engine: postgresql
+    schema: migrations
+    queries: internal/ticket/queries
+    gen:
+      go:
+        package: ticketdb
+        out: internal/ticket/db
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_json_tags: false
+        emit_interface: true
+        emit_db_tags: false
+        rename:
+          tenant_id: TenantID
+          ticket_id: TicketID
+          conversation_id: ConversationID
+          customer_id: CustomerID
+          agent_id: AgentID
+          from_agent_id: FromAgentID
+          assigned_agent_id: AssignedAgentID
+          platform_message_id: PlatformMessageID
+          channel_thread_id: ChannelThreadID
+          required_skills: RequiredSkills
+          sla_first_response_due: SLAFirstResponseDue
+          sla_resolution_due: SLAResolutionDue
+          first_response_at: FirstResponseAt
+          resolved_at: ResolvedAt
+          closed_at: ClosedAt
+          created_at: CreatedAt
+          updated_at: UpdatedAt
+
+  - engine: postgresql
+    schema: migrations
+    queries: internal/audit/queries
+    gen:
+      go:
+        package: auditdb
+        out: internal/audit/db
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_interface: true
+        rename:
+          tenant_id: TenantID
+          actor_type: ActorType
+          actor_id: ActorID
+          resource_type: ResourceType
+          resource_id: ResourceID
+          correlation_id: CorrelationID
+          prev_hash: PrevHash
+          merkle_root: MerkleRoot
+          from_seq: FromSeq
+          to_seq: ToSeq
+          signed_at: SignedAt
+          external_proof: ExternalProof
+
+  - engine: postgresql
+    schema: migrations
+    queries: internal/auth/queries
+    gen:
+      go:
+        package: authdb
+        out: internal/auth/db
+        sql_package: pgx/v5
+        emit_pointers_for_null_types: true
+        emit_interface: true
+        rename:
+          tenant_id: TenantID
+          agent_id: AgentID
+          display_name: DisplayName
+          max_concurrent: MaxConcurrent
+          last_heartbeat: LastHeartbeat
+          current_load: CurrentLoad
+          created_at: CreatedAt
+          updated_at: UpdatedAt

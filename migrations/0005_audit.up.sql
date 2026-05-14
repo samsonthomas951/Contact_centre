@@ -1,0 +1,60 @@
+-- 0005_audit: append-only hash-chained audit ledger.
+-- Per §8: only the audit_writer role inserts; no UPDATE or DELETE for any
+-- role. Each row's `hash` chains to the previous row's hash, making
+-- post-hoc tampering detectable. A periodic Merkle root (every 1 000
+-- events) signed with an Ed25519 key kept in Vault and emailed to the
+-- DPO inbox provides the external anchor.
+
+CREATE TABLE audit_events (
+  seq             BIGINT GENERATED ALWAYS AS IDENTITY,
+  ts              TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+  tenant_id       UUID NOT NULL,
+  actor_type      TEXT NOT NULL CHECK (actor_type IN ('agent','system','customer','connector')),
+  actor_id        UUID,
+  action          TEXT NOT NULL,
+  resource_type   TEXT,
+  resource_id     TEXT,
+  correlation_id  UUID NOT NULL,
+  payload         JSONB NOT NULL DEFAULT '{}'::jsonb,
+  prev_hash       BYTEA NOT NULL,
+  hash            BYTEA NOT NULL,
+  PRIMARY KEY (ts, seq)
+) PARTITION BY RANGE (ts);
+
+-- Same default-partition pattern as messages.
+CREATE TABLE audit_events_default PARTITION OF audit_events DEFAULT;
+
+CREATE INDEX audit_events_tenant_action_idx ON audit_events (tenant_id, action, ts DESC);
+CREATE INDEX audit_events_correlation_idx   ON audit_events (correlation_id);
+CREATE INDEX audit_events_actor_idx         ON audit_events (actor_type, actor_id, ts DESC);
+
+-- Merkle anchors are written every N events; verify() walks them.
+CREATE TABLE audit_anchors (
+  id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  from_seq        BIGINT NOT NULL,
+  to_seq          BIGINT NOT NULL,
+  merkle_root     BYTEA NOT NULL,
+  signature       BYTEA NOT NULL,
+  signed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  external_proof  TEXT,                -- e.g., OpenTimestamps receipt path
+  CHECK (from_seq <= to_seq)
+);
+
+-- Roles for separation of duties (§8).
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_writer') THEN
+    CREATE ROLE audit_writer NOINHERIT;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'audit_reader') THEN
+    CREATE ROLE audit_reader NOINHERIT;
+  END IF;
+END$$;
+
+REVOKE ALL ON audit_events, audit_events_default, audit_anchors FROM PUBLIC;
+GRANT  INSERT, SELECT ON audit_events, audit_events_default TO audit_writer;
+GRANT  INSERT, SELECT ON audit_anchors                       TO audit_writer;
+GRANT  SELECT          ON audit_events, audit_events_default TO audit_reader;
+GRANT  SELECT          ON audit_anchors                       TO audit_reader;
+-- Explicitly forbid mutation by anyone else.
+REVOKE UPDATE, DELETE ON audit_events, audit_events_default FROM PUBLIC;
