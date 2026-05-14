@@ -28,6 +28,7 @@ coverage.html
 deploy/secrets/*
 !deploy/secrets/.gitkeep
 !deploy/secrets/*.example
+!deploy/secrets/README.md
 acme.json
 
 # Local data

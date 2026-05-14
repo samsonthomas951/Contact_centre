@@ -1,0 +1,173 @@
+name: contact-centre
+
+networks:
+  edge: {}
+  data:
+    internal: true
+
+volumes:
+  pgdata: {}
+  natsdata: {}
+  miniodata: {}
+  clamavdb: {}
+  zitadeldata: {}
+  redisdata: {}
+  traefik_acme: {}
+
+secrets:
+  pg_password:
+    file: ./secrets/pg_password
+  minio_root_user:
+    file: ./secrets/minio_root_user
+  minio_root_password:
+    file: ./secrets/minio_root_password
+  zitadel_masterkey:
+    file: ./secrets/zitadel_masterkey
+
+services:
+  traefik:
+    image: traefik:v3.2
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.le.acme.email=${ACME_EMAIL:-ops@example.co.ke}
+      - --certificatesresolvers.le.acme.storage=/acme/acme.json
+      - --certificatesresolvers.le.acme.tlschallenge=true
+      - --metrics.prometheus=true
+      - --accesslog=true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_acme:/acme
+    networks: [edge]
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: contactcentre
+      POSTGRES_USER: contactcentre
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_password
+      PGDATA: /var/lib/postgresql/data/pgdata
+    secrets: [pg_password]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contactcentre -d contactcentre"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    restart: unless-stopped
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: contactcentre
+      DB_NAME: contactcentre
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: "5000"
+      DEFAULT_POOL_SIZE: "50"
+    secrets: [pg_password]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    volumes:
+      - redisdata:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    volumes:
+      - natsdata:/data
+    networks: [data]
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER_FILE: /run/secrets/minio_root_user
+      MINIO_ROOT_PASSWORD_FILE: /run/secrets/minio_root_password
+    secrets: [minio_root_user, minio_root_password]
+    volumes:
+      - miniodata:/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  clamav:
+    image: clamav/clamav:latest
+    restart: unless-stopped
+    volumes:
+      - clamavdb:/var/lib/clamav
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 2m
+
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    restart: unless-stopped
+    command:
+      - start-from-init
+      - --masterkeyFromEnv
+      - --tlsMode=external
+    environment:
+      ZITADEL_MASTERKEY_FILE: /run/secrets/zitadel_masterkey
+      ZITADEL_DATABASE_POSTGRES_HOST: postgres
+      ZITADEL_DATABASE_POSTGRES_PORT: "5432"
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: contactcentre
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD_FILE: /run/secrets/pg_password
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: contactcentre
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD_FILE: /run/secrets/pg_password
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_EXTERNALSECURE: "true"
+      ZITADEL_EXTERNALDOMAIN: ${ZITADEL_DOMAIN:-auth.example.co.ke}
+    secrets: [zitadel_masterkey, pg_password]
+    volumes:
+      - zitadeldata:/zitadel
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [data, edge]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.iam.rule=Host(`${ZITADEL_DOMAIN:-auth.example.co.ke}`)
+      - traefik.http.routers.iam.entrypoints=websecure
+      - traefik.http.routers.iam.tls.certresolver=le
+      - traefik.http.services.iam.loadbalancer.server.port=8080
+      - traefik.http.services.iam.loadbalancer.server.scheme=h2c
+
+  # Application services are added in subsequent phases.
