@@ -69,15 +69,18 @@ func (s *ObjectStore) Put(ctx context.Context, key string, body io.Reader, size 
 const MaxPresignTTL = 5 * time.Minute
 
 // PresignURL mints a presigned GET URL bounded to MaxPresignTTL. The
-// agentID is recorded as an x-amz-meta-agent-id query parameter so the
-// access shows up in the bucket access log.
+// agentID is logged in the application's audit_events ledger; we do
+// not stuff it into the S3 response-override params (only the small
+// set of standard `response-content-*` overrides is allowed there
+// and an unknown one rejects the request with InvalidArgument).
 func (s *ObjectStore) PresignURL(ctx context.Context, key, agentID string, ttl time.Duration) (string, error) {
 	if ttl <= 0 || ttl > MaxPresignTTL {
 		ttl = MaxPresignTTL
 	}
-	q := url.Values{}
-	q.Set("response-x-amz-meta-agent-id", agentID)
-	u, err := s.cli.PresignedGetObject(ctx, s.bucket, key, ttl, q)
+	// Pass an empty url.Values; we keep the agentID in scope for the
+	// caller's audit_events row but don't override response headers.
+	_ = agentID
+	u, err := s.cli.PresignedGetObject(ctx, s.bucket, key, ttl, url.Values{})
 	if err != nil {
 		return "", fmt.Errorf("document: presign: %w", err)
 	}

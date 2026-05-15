@@ -44,3 +44,4 @@ api/gen/
 
 # Docker
 docker-compose.override.yml
+.claude/

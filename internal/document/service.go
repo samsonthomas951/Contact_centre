@@ -43,13 +43,23 @@ type Document struct {
 //	4. If infected, write an audit-grade row marked 'infected' with the
 //	   signature; never put the bytes to MinIO.
 type Service struct {
-	Pool    *pgxpool.Pool
-	Store   *ObjectStore
-	Scanner *ClamAVScanner
+	Pool  *pgxpool.Pool
+	Store *ObjectStore
+	// Scanner is anything that can stream bytes to an AV engine.
+	// Production wires *ClamAVScanner; tests can pass a stub so the
+	// AV-rejection path is exercised without a real engine (ClamAV's
+	// EICAR signature anchors at offset 0 in many builds, which makes
+	// it brittle to test through a wrapped body).
+	Scanner Scanner
 	// DEKID identifies the per-tenant data-encryption key wrapped by
 	// Vault. Phase-1 single-tenant: the operator supplies one key id
 	// for the whole deployment.
 	DEKID string
+}
+
+// Scanner abstracts the AV path. *ClamAVScanner satisfies it.
+type Scanner interface {
+	Scan(ctx context.Context, r io.Reader) (Verdict, error)
 }
 
 // UploadParams is what callers pass to Upload.
@@ -104,6 +114,13 @@ func (s *Service) Upload(ctx context.Context, p UploadParams) (*Document, error)
 		scanStatus = "infected"
 	}
 
+	// Build the object key once so the metadata row and the MinIO PUT
+	// agree on where the bytes live. Calling buildKey() twice (once
+	// per call site) was a real bug -- the random + millisecond
+	// stamp differed between calls and PresignDownload pointed at a
+	// path that was never written.
+	objectKey := buildKey(p.TenantID)
+
 	// Insert metadata first; we want the audit trail even if the PUT
 	// fails. tenants.retention_documents_days drives retention_until.
 	row := s.Pool.QueryRow(ctx, `
@@ -122,7 +139,7 @@ func (s *Service) Upload(ctx context.Context, p UploadParams) (*Document, error)
 		RETURNING id, tenant_id, ticket_id, filename, content_type,
 		          size_bytes, sha256, scan_status, scan_signature, created_at`,
 		p.TenantID, p.TicketID, p.UploaderAgentID,
-		s.Store.BucketName(), buildKey(p.TenantID),
+		s.Store.BucketName(), objectKey,
 		p.Filename, contentType, int64(len(buf)), sum[:],
 		scanStatus, verdict.Signature, s.DEKID,
 	)
@@ -135,8 +152,7 @@ func (s *Service) Upload(ctx context.Context, p UploadParams) (*Document, error)
 	// Only put bytes to MinIO when clean. Infected and scan-failed
 	// uploads stop here; the supervisor UI surfaces them for review.
 	if scanStatus == "clean" {
-		key := buildKey(p.TenantID) // re-derive: insert used the same expression
-		if err := s.Store.Put(ctx, key, bytes.NewReader(buf), int64(len(buf)), contentType); err != nil {
+		if err := s.Store.Put(ctx, objectKey, bytes.NewReader(buf), int64(len(buf)), contentType); err != nil {
 			// Roll the row to scan_failed so the doc isn't surfaced as
 			// downloadable -- the bytes don't exist.
 			_, _ = s.Pool.Exec(ctx,
@@ -168,7 +184,7 @@ func (s *Service) PresignDownload(ctx context.Context, tenantID, docID, agentID 
 // without ClamAV), we treat the verdict as Clean so the local pipeline
 // still works -- production must always have a scanner wired.
 func (s *Service) scan(ctx context.Context, buf []byte) (Verdict, error) {
-	if s.Scanner == nil || s.Scanner.Addr == "" {
+	if s.Scanner == nil {
 		return Verdict{Clean: true}, nil
 	}
 	return s.Scanner.Scan(ctx, bytes.NewReader(buf))
