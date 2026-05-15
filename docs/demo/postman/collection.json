@@ -1,0 +1,725 @@
+{
+  "info": {
+    "_postman_id": "cc-demo-collection",
+    "name": "Contact Centre — Demo",
+    "description": "End-to-end API exerciser for the demo stack. Folders are organised by RBAC role so you can verify every gate. Pair with the `Contact Centre — Demo` environment.\n\nFlow that wires variables together:\n1. **Health** > anything (no auth needed)\n2. **Identity** > Whoami (Ada) — confirms agent bearer works\n3. **Tickets (Ada)** > List — auto-fills `{{ticket_id}}` and `{{conversation_id}}`\n4. **Tickets (Ada)** > Append message — sends a reply on the saved ticket\n5. **Supervisor (Bob)** / **Analytics (Bob)** — read-only dashboards\n6. **DSR (Diana)** > Open — auto-fills `{{dsr_id}}`; then Get / Assign / Resolve\n7. **Onboarding (Carol)** > Get tenant / Update retention / Invite agent\n8. **Negative — RBAC denies** — Ada hits an admin endpoint, expects 403\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "0. Health & probes",
+      "item": [
+        {
+          "name": "GET /healthz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/healthz",
+              "host": ["{{base_url}}"],
+              "path": ["healthz"]
+            },
+            "description": "Liveness probe. Returns 200 `ok` once the gateway is up. No auth."
+          }
+        },
+        {
+          "name": "GET /readyz",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/readyz",
+              "host": ["{{base_url}}"],
+              "path": ["readyz"]
+            },
+            "description": "Readiness — only returns 200 when Postgres pings back."
+          }
+        },
+        {
+          "name": "GET /metrics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/metrics",
+              "host": ["{{base_url}}"],
+              "path": ["metrics"]
+            },
+            "description": "Prometheus exposition. Useful to confirm scrapes are reaching the gateway."
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Identity (any role)",
+      "item": [
+        {
+          "name": "GET /v1/me  (Ada — agent)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            },
+            "description": "Echoes the parsed identity (agent_id, tenant_id, roles). Confirms the bearer is valid."
+          }
+        },
+        {
+          "name": "GET /v1/me  (Bob — supervisor)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/me  (Carol — admin)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/me  (Diana — dpo)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/me  (no bearer → 401)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            },
+            "description": "Negative test. Expect HTTP 401."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Tickets (Ada — agent)",
+      "item": [
+        {
+          "name": "List",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const rows = json.tickets || json.rows || [];",
+                  "if (rows.length) {",
+                  "  pm.environment.set('ticket_id', rows[0].id);",
+                  "  pm.environment.set('conversation_id', rows[0].conversation_id);",
+                  "  console.log('Saved ticket_id =', rows[0].id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets?state=open&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets"],
+              "query": [
+                { "key": "state", "value": "open" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "List tickets visible to Ada. The test script saves the first row's ticket_id + conversation_id so the next requests can use them."
+          }
+        },
+        {
+          "name": "Get one",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}"]
+            }
+          }
+        },
+        {
+          "name": "List messages",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/messages?limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "messages"],
+              "query": [{ "key": "limit", "value": "50" }]
+            }
+          }
+        },
+        {
+          "name": "Append message (agent reply)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"direction\": \"out\",\n  \"body\": \"Hi! I'm looking into this for you now.\",\n  \"attachments\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/messages",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "messages"]
+            },
+            "description": "Sends an outbound message. The fan-out publishes on `outbound.<channel>.text`; the demo stub writes it to `outbound_log`."
+          }
+        },
+        {
+          "name": "Patch state (open → pending)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"state\": \"pending\" }"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/state",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "state"]
+            },
+            "description": "State transitions are validated by `internal/ticket/state.go`. Try `solved` next, then `closed`."
+          }
+        },
+        {
+          "name": "Create new ticket",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"conversation_id\": \"{{conversation_id}}\",\n  \"priority\": 3,\n  \"required_skills\": []\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Documents (Ada — agent)",
+      "item": [
+        {
+          "name": "Upload (multipart)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Pick any file < 25 MiB. Allowed types: pdf, png, jpeg, txt, csv, docx."
+                },
+                {
+                  "key": "ticket_id",
+                  "type": "text",
+                  "value": "{{ticket_id}}",
+                  "description": "Optional. Links the doc to a ticket."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/documents",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "documents"]
+            },
+            "description": "Upload streams to MinIO with SSE-S3, scans via ClamAV before commit. Response includes the doc id you'll use to download."
+          }
+        },
+        {
+          "name": "Download (presigned)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/documents/{{document_id}}/download",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "documents", "{{document_id}}", "download"]
+            },
+            "description": "Returns a 5-min presigned URL. Set `document_id` manually after running Upload."
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Connectors — list connected (any role)",
+      "item": [
+        {
+          "name": "GET /v1/connect/fb/pages",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/connect/fb/pages",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "connect", "fb", "pages"]
+            },
+            "description": "Empty until you complete the OAuth flow in §4 of docs/demo/README.md."
+          }
+        },
+        {
+          "name": "GET /v1/connect/fb/ig",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/connect/fb/ig",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "connect", "fb", "ig"]
+            }
+          }
+        },
+        {
+          "name": "GET /v1/connect/fb/wa",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/connect/fb/wa",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "connect", "fb", "wa"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Supervisor (Bob — supervisor)",
+      "item": [
+        {
+          "name": "Queue depth",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/supervisor/queue",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "supervisor", "queue"]
+            }
+          }
+        },
+        {
+          "name": "Agent presence",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/supervisor/agents",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "supervisor", "agents"]
+            }
+          }
+        },
+        {
+          "name": "At-risk tickets (next 30m)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/supervisor/at-risk?within_minutes=30&limit=50",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "supervisor", "at-risk"],
+              "query": [
+                { "key": "within_minutes", "value": "30" },
+                { "key": "limit", "value": "50" }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Analytics (Bob — supervisor)",
+      "item": [
+        {
+          "name": "Tickets daily (last 30 days)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analytics/tickets-daily",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "analytics", "tickets-daily"]
+            },
+            "description": "Defaults to the last 30 days. Add ?from=YYYY-MM-DD&to=YYYY-MM-DD to override (max 366d)."
+          }
+        },
+        {
+          "name": "Agents daily (last 30 days)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/analytics/agents-daily",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "analytics", "agents-daily"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. DSR (Diana — dpo)",
+      "item": [
+        {
+          "name": "List requests",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/dsr",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr"]
+            }
+          }
+        },
+        {
+          "name": "Open access request",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const r = pm.response.json();",
+                  "  pm.environment.set('dsr_id', r.id);",
+                  "  console.log('Saved dsr_id =', r.id);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"subject_email\": \"customer@example.com\",\n  \"kind\": \"access\",\n  \"reason\": \"Subject requested copy of all data we hold under Kenya DPA s.26.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/dsr",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr"]
+            },
+            "description": "Kinds: `access`, `correction`, `erasure`, `objection`, `portability`, `restriction`."
+          }
+        },
+        {
+          "name": "Get one",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/dsr/{{dsr_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr", "{{dsr_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Assign to Diana",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"agent_id\": \"55555555-5555-5555-5555-555555555555\" }"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/dsr/{{dsr_id}}/assign",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr", "{{dsr_id}}", "assign"]
+            }
+          }
+        },
+        {
+          "name": "Record action (note)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"note\",\n  \"detail\": \"Verified subject identity via passport scan; preparing data export.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/dsr/{{dsr_id}}/actions",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr", "{{dsr_id}}", "actions"]
+            }
+          }
+        },
+        {
+          "name": "Resolve (fulfil)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{diana_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"outcome\": \"fulfilled\",\n  \"summary\": \"Provided data export to subject via secure download link.\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/dsr/{{dsr_id}}/resolve",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr", "{{dsr_id}}", "resolve"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Onboarding (Carol — admin)",
+      "item": [
+        {
+          "name": "Get my tenant",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/tenant",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "tenant"]
+            }
+          }
+        },
+        {
+          "name": "Update retention policy",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"messages_days\": 365,\n  \"documents_days\": 1825,\n  \"audit_days\": 2555\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/tenant/retention",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "tenant", "retention"]
+            },
+            "description": "Each value clamped to [7, 3650] days."
+          }
+        },
+        {
+          "name": "Invite agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"new.agent@demo.local\",\n  \"display_name\": \"New Agent\",\n  \"role\": \"agent\",\n  \"max_concurrent\": 5\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/agents",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "agents"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. CSAT (public — no auth)",
+      "item": [
+        {
+          "name": "Preview survey",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/csat/{{csat_token}}",
+              "host": ["{{base_url}}"],
+              "path": ["csat", "{{csat_token}}"]
+            },
+            "description": "Set `csat_token` manually. Tokens are emitted when a ticket transitions to `solved` (sender side not yet wired in the demo)."
+          }
+        },
+        {
+          "name": "Submit score",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"score\": 5, \"comment\": \"Quick and friendly response, thanks.\" }"
+            },
+            "url": {
+              "raw": "{{base_url}}/csat/{{csat_token}}",
+              "host": ["{{base_url}}"],
+              "path": ["csat", "{{csat_token}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Negative — RBAC denies",
+      "item": [
+        {
+          "name": "Ada → /v1/supervisor/queue (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/supervisor/queue",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "supervisor", "queue"]
+            },
+            "description": "Agent role lacks supervisor scope. Server should return 403."
+          }
+        },
+        {
+          "name": "Ada → /v1/onboarding/tenant (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/tenant",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "tenant"]
+            }
+          }
+        },
+        {
+          "name": "Bob → /v1/dsr (expect 403)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/dsr",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "dsr"]
+            },
+            "description": "Supervisor role isn't on the DSR allow-list (dpo / auditor / admin)."
+          }
+        },
+        {
+          "name": "Garbage bearer → /v1/me (expect 401)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer demo:not-a-uuid:also-not:agent" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/me",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "me"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

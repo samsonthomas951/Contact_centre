@@ -39,6 +39,8 @@ var (
 	DemoTenantID     = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 	DemoAgentAdaID   = uuid.MustParse("22222222-2222-2222-2222-222222222222")
 	DemoAgentBobID   = uuid.MustParse("33333333-3333-3333-3333-333333333333")
+	DemoAgentCarolID = uuid.MustParse("44444444-4444-4444-4444-444444444444")
+	DemoAgentDianaID = uuid.MustParse("55555555-5555-5555-5555-555555555555")
 )
 
 func main() {
@@ -88,6 +90,8 @@ func run() error {
 		slog.String("tenant", DemoTenantID.String()),
 		slog.String("agent_ada", DemoAgentAdaID.String()),
 		slog.String("agent_bob", DemoAgentBobID.String()),
+		slog.String("agent_carol", DemoAgentCarolID.String()),
+		slog.String("agent_diana", DemoAgentDianaID.String()),
 	)
 	return nil
 }
@@ -111,6 +115,8 @@ func upsertAgents(ctx context.Context, tx pgx.Tx) error {
 	for _, a := range []agent{
 		{DemoAgentAdaID, "ada@demo.local", "Ada Lovelace", "agent"},
 		{DemoAgentBobID, "bob@demo.local", "Bob Supervisor", "supervisor"},
+		{DemoAgentCarolID, "carol@demo.local", "Carol Admin", "admin"},
+		{DemoAgentDianaID, "diana@demo.local", "Diana DPO", "dpo"},
 	} {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO agents (id, tenant_id, email, display_name, role, max_concurrent)

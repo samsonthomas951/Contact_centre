@@ -73,9 +73,12 @@ demo: demo-up demo-migrate demo-seed ## Bring up the demo stack end-to-end
 	@echo "  Agent UI:       run \`make demo-ui\` then open http://localhost:3000"
 	@echo
 	@echo "  Demo logins (use the email; any password is accepted):"
-	@echo "    ada@demo.local   (agent)"
-	@echo "    bob@demo.local   (supervisor)"
+	@echo "    ada@demo.local    (agent)"
+	@echo "    bob@demo.local    (supervisor)"
+	@echo "    carol@demo.local  (admin)"
+	@echo "    diana@demo.local  (dpo)"
 	@echo
+	@echo "  Postman:        import docs/demo/postman/{collection,environment}.json"
 	@echo "  Tear down:      make demo-down"
 	@echo "════════════════════════════════════════════════════════════"
 

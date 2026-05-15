@@ -55,7 +55,20 @@ make demo-ui                                 # http://localhost:3000
 
 Sign in at `http://localhost:3000` with `ada@demo.local` (any
 password). You should see 5 demo tickets across 4 channels in the
-inbox, and `bob@demo.local` gets the supervisor view.
+inbox. Other seeded logins:
+
+| Email | Role | What changes in the UI |
+|---|---|---|
+| `ada@demo.local`   | agent      | inbox of tickets assigned to her |
+| `bob@demo.local`   | supervisor | adds the queue + agents + at-risk dashboards |
+| `carol@demo.local` | admin      | adds onboarding + tenant retention |
+| `diana@demo.local` | dpo        | adds the DSR queue |
+
+To exercise every endpoint directly (without the agent UI), import
+`docs/demo/postman/{collection,environment}.json` — see
+`docs/demo/postman/README.md` for the walkthrough. Each role has its
+own pre-baked bearer; the `10. Negative — RBAC denies` folder proves
+the gates work.
 
 ## 3. Try the widget (no Facebook needed)
 
