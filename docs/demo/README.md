@@ -109,9 +109,11 @@ Restart the gateway so it picks up the env vars:
 docker compose -f deploy/docker-compose.demo.yml up -d gateway
 ```
 
-### 4d. Configure the Meta App webhook + OAuth redirect
+### 4d. Configure Meta App: Messenger + Instagram + WhatsApp webhooks
 
-Back in the Meta Developer dashboard:
+Back in the Meta Developer dashboard, **add three Products** to the
+App: **Messenger**, **Instagram**, and **WhatsApp**. One App = one set
+of credentials covering all three channels.
 
 **Messenger → Settings → Webhooks → Configure:**
 
@@ -119,10 +121,22 @@ Back in the Meta Developer dashboard:
 - Verify Token: paste your `FB_APP_SECRET` (the demo wires verify
   token = app secret for simplicity; production uses a separate value)
 - Subscription fields: `messages`, `messaging_postbacks`,
-  `message_deliveries`, `message_reads`
+  `message_deliveries`, `message_reads`, `feed`, `mention`
 
-Click **Verify and Save**. Meta will GET the URL with the verify
-token; the gateway echoes the challenge back.
+**Instagram → Webhooks → Configure:**
+
+- Callback URL: `https://<your-tunnel-url>/v1/ig/webhook`
+- Verify Token: same `FB_APP_SECRET`
+- Subscription fields: `messages`, `comments`, `mentions`
+
+**WhatsApp → Configuration → Webhooks → Edit:**
+
+- Callback URL: `https://<your-tunnel-url>/v1/wa/webhook`
+- Verify Token: same `FB_APP_SECRET`
+- Subscribe to fields: `messages`, `message_status_updates`
+
+Click **Verify and Save** on each. Meta will GET each URL with the
+verify token; the gateway echoes the challenge back.
 
 **App Settings → Basic → Add Platform → Website:**
 
@@ -140,24 +154,41 @@ as **Tester**.
 
 Accept the invite from your personal Facebook notifications.
 
-### 4f. Connect the Page
+### 4f. Connect everything (one click)
 
 In the agent UI, sign in as `bob@demo.local` (supervisor) →
-**Channels** → **Connect Facebook**.
+**Channels** → **Connect with Facebook**.
 
 You'll be redirected to Meta's consent screen. Pick the Page(s) you
-want to connect. After consent, Meta posts back to the gateway, which
-exchanges the code, fetches Pages, subscribes to webhook fields, and
-stores the encrypted tokens in `fb_pages`. You'll see a success page
-listing the connected Pages.
+want to connect (and tick the WhatsApp + Instagram permissions if Meta
+prompts). After consent, the gateway:
 
-### 4g. Send yourself a DM
+1. Exchanges the code for a long-lived user token.
+2. Lists every Page you admin and subscribes each to webhook fields →
+   stores in `fb_pages`.
+3. For every connected Page, looks up its linked Instagram Business
+   Account (`/{page_id}?fields=instagram_business_account`) and stores
+   it in `ig_accounts` (Path 1, FK to fb_page_id).
+4. Walks `/me/businesses` → owned WABAs → phone numbers, subscribes
+   each WABA, stores each phone number in `wa_phone_numbers`.
 
-From any *other* Facebook account (or Messenger as a different
-person), message your connected Page.
+You'll land on a success page listing all three: connected Pages,
+Instagram accounts, and WhatsApp numbers.
 
-The webhook fires → `ingress.fb.message` → ticket consumer creates a
-customer + conversation + ticket + message → agent UI inbox refreshes
+### 4g. Send yourself a message on any of the three channels
+
+Pick whichever channel you want to demo:
+
+| Channel | How to send | What you'll see |
+|---|---|---|
+| Messenger DM to your Page | Open Messenger as a different account, message the Page | Ticket appears in the agent inbox under channel `fb` |
+| Instagram DM to your IG Business | Use a different IG account, DM the connected IG | Ticket appears under channel `ig` |
+| WhatsApp message to your WA Business number | Send a WhatsApp message to your verified WA number from another phone | Ticket appears under channel `wa` |
+| Comment on a Page post | Comment on any post from a different account | Ticket appears under channel `fb`, kind `postback` |
+
+In every case the webhook fires →
+`ingress.{fb|ig|wa}.message` (or `comment`) → ticket consumer creates
+a customer + conversation + ticket + message → agent UI inbox refreshes
 in ~1 second.
 
 ## 5. Tear down
@@ -179,16 +210,26 @@ make demo-down                               # stops + removes containers + volu
 
 ## What's NOT in this demo
 
-- **Other channels (X, WhatsApp, Instagram, voice)** — same OAuth
-  pattern, different platform. X requires a paid API plan ($200/mo
-  Basic minimum). Set up via the Channels page once their connectors
-  ship the OAuth flows.
-- **Real outbound to Facebook** — agent replies currently land in
-  `outbound_log` via the `outbound-stub` worker. To actually ship the
-  reply to Facebook, replace `outbound-stub` with the production FB
-  Sender (`internal/connector/facebook/outbound.go` already exists);
-  this is a ~2-line wiring change to subscribe `outbound.fb.text` and
-  call `Sender.SendText` instead of writing to the log table.
-- **App Review** — required to onboard *other* brands' Pages. Per
-  the technical plan §17 this typically takes 4-8 weeks and requires
-  Business Verification (legal docs + tax ID).
+- **X (Twitter)** — different OAuth shape, plus X removed free API
+  access in 2023. Account Activity API now requires a paid plan
+  ($200/mo Basic minimum, $5000/mo Pro). The connector + token vault
+  exist (`internal/connector/x/`); wiring an OAuth flow lands when
+  someone has a paid X dev account to test against.
+- **Voice (Africa's Talking)** — connector + IVR consent prompt
+  already exist (`internal/connector/voice/`); needs an AT account +
+  a real phone number to demo.
+- **Real outbound to Meta** — agent replies currently land in
+  `outbound_log` via the `outbound-stub` worker. To actually ship
+  replies back via Messenger / IG / WA, replace the stub with the
+  per-channel Senders (`facebook.Sender` already exists for the FB
+  side; IG + WA need ~50 LOC each that mirror it). The fan-out
+  publish on `outbound.<channel>.text` is already in place.
+- **WhatsApp without a verified phone** — for the WA demo to actually
+  fire webhooks, the WABA needs at least one verified phone number.
+  Meta provides a free **test number** under WhatsApp → Getting
+  Started; use that to skip the SIM verification step.
+- **App Review** — required to onboard *other* brands' Pages /
+  IG accounts / WA numbers. Per the technical plan §17 this typically
+  takes 4-8 weeks and requires Business Verification (legal docs +
+  tax ID). Until then, only people with App Roles on your Meta App
+  can interact with the demo.

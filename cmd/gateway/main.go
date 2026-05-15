@@ -197,8 +197,15 @@ func run() error {
 	// fb_pages (populated by the OAuth callback). Without these env
 	// vars the routes simply don't mount and the gateway still serves
 	// the rest -- agent UI demo flow doesn't depend on FB.
-	var fbHandler *facebook.WebhookHandler
-	var fbOAuth *facebook.OAuthHandler
+	// All three Meta webhooks (FB / IG / WA) share one App, one App
+	// Secret, one verify token. Wire them together so a single
+	// FB_APP_SECRET env covers everything.
+	var (
+		fbHandler *facebook.WebhookHandler
+		fbOAuth   *facebook.OAuthHandler
+		igHandler *instagram.WebhookHandler
+		waHandler *whatsapp.WebhookHandler
+	)
 	if fbCfg.AppID != "" && fbCfg.AppSecret != "" {
 		fbHandler = &facebook.WebhookHandler{
 			AppSecret: fbCfg.AppSecret,
@@ -206,12 +213,24 @@ func run() error {
 			Resolver:  facebook.NewPGTenantResolver(pool),
 			JS:        js,
 		}
+		igHandler = &instagram.WebhookHandler{
+			AppSecret: fbCfg.AppSecret,
+			VerifyTok: fbCfg.AppSecret,
+			Resolver:  instagram.NewPGTenantResolver(pool),
+			JS:        js,
+		}
+		waHandler = &whatsapp.WebhookHandler{
+			AppSecret: fbCfg.AppSecret,
+			VerifyTok: fbCfg.AppSecret,
+			Resolver:  whatsapp.NewPGTenantResolver(pool),
+			JS:        js,
+		}
 		demoCrypter, err := facebook.NewDemoCrypter(demoKey.Key)
 		if err != nil {
 			return err
 		}
 		fbOAuth = facebook.NewOAuthHandler(fbCfg, pool, demoCrypter)
-		slog.Info("fb: OAuth + webhook wired",
+		slog.Info("meta: OAuth + webhooks wired (FB+IG+WA)",
 			slog.String("app_id", fbCfg.AppID),
 			slog.String("redirect_uri", fbCfg.RedirectURI))
 	}
@@ -222,6 +241,8 @@ func run() error {
 		Pinger:     pool,
 		FB:         fbHandler,
 		FBOAuth:    fbOAuth,
+		IG:         igHandler,
+		WA:         waHandler,
 		Supervisor: &supervisor.API{Repo: supervisor.NewRepo(pool)},
 		Analytics:  &analytics.API{M: analytics.New(pool)},
 		Onboarding: &onboarding.API{
@@ -376,6 +397,40 @@ func newRouter(d routerDeps) http.Handler {
 				}
 				w.Header().Set("Content-Type", "application/json")
 				_ = json.NewEncoder(w).Encode(map[string]any{"pages": pages})
+			})
+			// IG accounts discovered during the same FB OAuth.
+			r.Get("/connect/fb/ig", func(w http.ResponseWriter, req *http.Request) {
+				id, err := auth.FromContext(req.Context())
+				if err != nil {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				ig, err := fbo.ListConnectedIG(req.Context(), id.TenantID)
+				if err != nil {
+					slog.ErrorContext(req.Context(), "fb: list ig",
+						slog.String("err", err.Error()))
+					http.Error(w, "lookup failed", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"ig": ig})
+			})
+			// WA phone numbers discovered during the same FB OAuth.
+			r.Get("/connect/fb/wa", func(w http.ResponseWriter, req *http.Request) {
+				id, err := auth.FromContext(req.Context())
+				if err != nil {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				wa, err := fbo.ListConnectedWA(req.Context(), id.TenantID)
+				if err != nil {
+					slog.ErrorContext(req.Context(), "fb: list wa",
+						slog.String("err", err.Error()))
+					http.Error(w, "lookup failed", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"wa": wa})
 			})
 		}
 		if docs != nil {

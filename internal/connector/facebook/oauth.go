@@ -42,11 +42,21 @@ type OAuthConfig struct {
 // the Page list (`pages_show_list`), inbound user content
 // (`pages_read_user_content`), engagement reads (`pages_read_engagement`).
 var Scopes = []string{
+	// Facebook Page channel.
 	"pages_show_list",
 	"pages_messaging",
 	"pages_manage_metadata",
 	"pages_read_user_content",
 	"pages_read_engagement",
+	// Instagram Business (Path 1, linked to a Page).
+	"instagram_basic",
+	"instagram_manage_messages",
+	"instagram_manage_comments",
+	// WhatsApp Business Cloud API.
+	"whatsapp_business_management",
+	"whatsapp_business_messaging",
+	// Required to enumerate the user's Businesses + their owned WABAs.
+	"business_management",
 }
 
 // OAuthHandler hosts /v1/connect/fb (start) and /v1/connect/fb/callback.
@@ -178,8 +188,10 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: subscribe + persist each Page.
-	connected := []string{}
+	// Step 5: subscribe + persist each Page; for each Page, also
+	// discover the linked IG Business Account (Path 1).
+	connectedPages := []string{}
+	connectedIG := []string{}
 	for _, p := range pages {
 		if err := h.subscribePage(ctx, p.ID, p.Token); err != nil {
 			slog.WarnContext(ctx, "fb oauth: subscribe",
@@ -193,19 +205,45 @@ func (h *OAuthHandler) Callback(w http.ResponseWriter, r *http.Request) {
 				slog.String("err", err.Error()))
 			continue
 		}
-		connected = append(connected, p.Name)
+		connectedPages = append(connectedPages, p.Name)
+
+		// IG Path 1: a Page may have a linked Instagram Business
+		// Account. Look it up and persist if present. Failure here
+		// is logged but doesn't roll back the Page connection.
+		if ig, ok := h.discoverIGForPage(ctx, p); ok {
+			if err := h.upsertIGAccount(ctx, tenantID, ig, p.ID); err != nil {
+				slog.WarnContext(ctx, "fb oauth: upsert ig",
+					slog.String("ig_user_id", ig.IGUserID),
+					slog.String("err", err.Error()))
+			} else {
+				connectedIG = append(connectedIG, "@"+ig.Username)
+			}
+		}
+	}
+
+	// Step 6: discover WhatsApp Business assets owned by the user's
+	// businesses. WA scoping is Business → WABA → Phone Number, so
+	// we walk all three levels.
+	connectedWA, err := h.discoverAndPersistWA(ctx, tenantID, longTok)
+	if err != nil {
+		slog.WarnContext(ctx, "fb oauth: discover wa",
+			slog.String("err", err.Error()))
+		// Non-fatal: the user might just not have any WABAs.
 	}
 
 	// Friendly text response so the brand admin sees what landed.
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, `<!doctype html><html><body style="font-family:system-ui;padding:2rem;max-width:40rem;margin:auto">
-<h1>Facebook connected</h1>
-<p>Subscribed %d Page(s) to your contact-centre tenant:</p>
-<ul>%s</ul>
-<p>Inbound DMs and Page comments will now appear in the agent inbox.</p>
+<h1>Meta channels connected</h1>
+<h2>Facebook Pages (%d)</h2><ul>%s</ul>
+<h2>Instagram accounts (%d)</h2><ul>%s</ul>
+<h2>WhatsApp numbers (%d)</h2><ul>%s</ul>
+<p>Inbound DMs, comments, and WhatsApp messages will now flow into the agent inbox.</p>
 <p><a href="/agent/inbox">Back to the inbox</a></p>
 </body></html>`,
-		len(connected), liItems(connected))
+		len(connectedPages), liItems(connectedPages),
+		len(connectedIG), liItems(connectedIG),
+		len(connectedWA), liItems(connectedWA))
 }
 
 // pageInfo is the subset of /me/accounts we use.
