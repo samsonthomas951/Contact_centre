@@ -134,14 +134,16 @@ jobs:
                migrations/0007_x_connector.up.sql migrations/0008_documents.up.sql \
                migrations/0009_whatsapp.up.sql migrations/0010_instagram.up.sql \
                migrations/0011_analytics.up.sql migrations/0012_dsr.up.sql \
-               migrations/0013_widget.up.sql migrations/0014_voice.up.sql)
-          DOWNS=(migrations/0014_voice.down.sql migrations/0013_widget.down.sql \
-                 migrations/0012_dsr.down.sql migrations/0011_analytics.down.sql \
-                 migrations/0010_instagram.down.sql migrations/0009_whatsapp.down.sql \
-                 migrations/0008_documents.down.sql migrations/0007_x_connector.down.sql \
-                 migrations/0006_connectors.down.sql migrations/0005_audit.down.sql \
-                 migrations/0004_tickets.down.sql migrations/0003_customers.down.sql \
-                 migrations/0002_agents.down.sql migrations/0001_init.down.sql)
+               migrations/0013_widget.up.sql migrations/0014_voice.up.sql \
+               migrations/0015_webhooks.up.sql)
+          DOWNS=(migrations/0015_webhooks.down.sql migrations/0014_voice.down.sql \
+                 migrations/0013_widget.down.sql migrations/0012_dsr.down.sql \
+                 migrations/0011_analytics.down.sql migrations/0010_instagram.down.sql \
+                 migrations/0009_whatsapp.down.sql migrations/0008_documents.down.sql \
+                 migrations/0007_x_connector.down.sql migrations/0006_connectors.down.sql \
+                 migrations/0005_audit.down.sql migrations/0004_tickets.down.sql \
+                 migrations/0003_customers.down.sql migrations/0002_agents.down.sql \
+                 migrations/0001_init.down.sql)
           run() { psql -h localhost -p 5432 -U postgres -d revtest -v ON_ERROR_STOP=1 -f "$1" >/dev/null; }
           for f in "${UPS[@]}";   do echo "UP   $f";  run "$f"; done
           for f in "${DOWNS[@]}"; do echo "DOWN $f";  run "$f"; done
