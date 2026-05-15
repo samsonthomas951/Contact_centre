@@ -21,7 +21,18 @@ var ErrNotFound = errors.New("ticket: not found")
 // Sqlc-generated queries land in internal/ticket/db; for Phase 0 the
 // surface area is small enough to keep handwritten. We'll move to sqlc
 // when the query count grows.
-type Repo struct{ pool *pgxpool.Pool }
+type Repo struct {
+	pool *pgxpool.Pool
+	// OnStateChange is fired after a successful ChangeState commit.
+	// nil is a no-op so unit tests don't need to mock JetStream. The
+	// gateway wires it to a JetStream publisher that emits
+	// `ticket.state_change` so subscribers (CSAT dispatcher, webhook
+	// fan-out, audit) react.
+	OnStateChange StateChangeListener
+}
+
+// StateChangeListener is the post-commit hook signature.
+type StateChangeListener func(ctx context.Context, tenantID, ticketID uuid.UUID, from, to State)
 
 // NewRepo binds a Repo to a pool.
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
@@ -188,6 +199,13 @@ func (r *Repo) ChangeState(ctx context.Context, tenantID, id uuid.UUID, to State
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
+	}
+	// Post-commit notification. We capture `current` (pre-commit) and
+	// `to` (the actual landed state). The hook runs synchronously --
+	// it's the caller's job to dispatch async work; this guarantees
+	// "if we returned the new ticket, the listener saw it".
+	if r.OnStateChange != nil {
+		r.OnStateChange(ctx, tenantID, id, current, to)
 	}
 	return t, nil
 }

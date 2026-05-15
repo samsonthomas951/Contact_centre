@@ -22,6 +22,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"net/http"
 	"os"
@@ -29,6 +30,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/google/uuid"
+	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
@@ -113,10 +116,40 @@ func run() error {
 	// in its own binary; for the modular-monolith default it rides
 	// inside the gateway process.
 	ticketRepo := ticket.NewRepo(pool)
+
+	// Wire the post-commit hook to publish ticket.state_change so the
+	// CSAT dispatcher (and future audit/webhook consumers) react.
+	ticketRepo.OnStateChange = func(ctx context.Context, tenantID, ticketID uuid.UUID, from, to ticket.State) {
+		ev, err := json.Marshal(struct {
+			TicketID uuid.UUID `json:"ticket_id"`
+			TenantID uuid.UUID `json:"tenant_id"`
+			From     string    `json:"from"`
+			To       string    `json:"to"`
+		}{ticketID, tenantID, string(from), string(to)})
+		if err != nil {
+			return
+		}
+		// MsgID dedupes the (ticket_id, to) pair so a flapping
+		// transition doesn't double-emit on retry.
+		_, _ = js.Publish(ctx, "ticket.state_change", ev,
+			jetstream.WithMsgID(ticketID.String()+":"+string(to)))
+	}
+
 	ingress := ticket.NewConsumer(js, ticketRepo)
 	go func() {
 		if err := ingress.Run(ctx); err != nil {
 			slog.Error("ticket: ingress consumer exited",
+				slog.String("err", err.Error()))
+		}
+	}()
+
+	// CSAT dispatcher: subscribes to ticket.state_change, fires a
+	// survey on resolved transitions.
+	csatDisp := csat.NewDispatcher(js, pool, csat.NewRepo(pool),
+		"https://app.example.co.ke/csat") // TODO: env var
+	go func() {
+		if err := csatDisp.Run(ctx); err != nil {
+			slog.Error("csat: dispatcher exited",
 				slog.String("err", err.Error()))
 		}
 	}()
