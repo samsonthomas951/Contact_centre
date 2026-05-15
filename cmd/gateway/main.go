@@ -39,6 +39,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
 	"github.com/samsonthomas951/contact-centre/internal/connector/widget"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
+	"github.com/samsonthomas951/contact-centre/internal/csat"
 	"github.com/samsonthomas951/contact-centre/internal/document"
 	"github.com/samsonthomas951/contact-centre/internal/dsr"
 	"github.com/samsonthomas951/contact-centre/internal/onboarding"
@@ -118,6 +119,7 @@ func run() error {
 			Sites:    widget.NewPGSiteLookup(pool),
 			Visitors: widget.NewPGVisitorStore(pool),
 		},
+		CSATPublic: &csat.PublicAPI{Repo: csat.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -151,14 +153,15 @@ type routerDeps struct {
 	Analytics  *analytics.API
 	Onboarding *onboarding.API
 	DSR        *dsr.API
+	CSATPublic *csat.PublicAPI
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, wg, vc, docs, sup, ana, onb, ds :=
+	v, tr, p, fb, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Widget,
-		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR
+		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -216,6 +219,12 @@ func newRouter(d routerDeps) http.Handler {
 		// param is the per-tenant rotating value stored on
 		// voice_numbers. Africa's Talking posts form-encoded.
 		r.Method(http.MethodPost, "/v1/voice/at/{secret}", vc)
+	}
+	if cs != nil {
+		// Public CSAT collection. Token in the URL path is the access
+		// control; the rate limiter at the edge keeps brute-force noise
+		// out of the analytics rollups.
+		r.Mount("/csat", cs.Routes())
 	}
 
 	// Authenticated v1 surface.

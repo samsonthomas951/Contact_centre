@@ -19,6 +19,8 @@ type TicketsDailyRow struct {
 	FirstResponseSLAMet     *float64   `json:"first_response_sla_met,omitempty"`
 	ResolutionSLAMet        *float64   `json:"resolution_sla_met,omitempty"`
 	FCRRate                 *float64   `json:"fcr_rate,omitempty"`
+	CSATResponses           int        `json:"csat_responses"`
+	CSATAvg                 *float64   `json:"csat_avg,omitempty"`
 }
 
 // TicketsDaily returns the per-channel rollup for the date range
@@ -28,7 +30,8 @@ func (m *Materialiser) TicketsDaily(ctx context.Context, tenantID uuid.UUID, fro
 	rows, err := m.Pool.Query(ctx, `
 		SELECT channel, day, created_count, resolved_count, closed_count,
 		       avg_first_response_seconds, avg_resolution_seconds,
-		       first_response_sla_met, resolution_sla_met, fcr_rate
+		       first_response_sla_met, resolution_sla_met, fcr_rate,
+		       csat_responses, csat_avg
 		FROM mart_tickets_daily
 		WHERE tenant_id = $1 AND day BETWEEN $2 AND $3
 		ORDER BY day, channel`,
@@ -43,7 +46,8 @@ func (m *Materialiser) TicketsDaily(ctx context.Context, tenantID uuid.UUID, fro
 		var r TicketsDailyRow
 		if err := rows.Scan(&r.Channel, &r.Day, &r.CreatedCount, &r.ResolvedCount,
 			&r.ClosedCount, &r.AvgFirstResponseSeconds, &r.AvgResolutionSeconds,
-			&r.FirstResponseSLAMet, &r.ResolutionSLAMet, &r.FCRRate); err != nil {
+			&r.FirstResponseSLAMet, &r.ResolutionSLAMet, &r.FCRRate,
+			&r.CSATResponses, &r.CSATAvg); err != nil {
 			return nil, err
 		}
 		out = append(out, r)

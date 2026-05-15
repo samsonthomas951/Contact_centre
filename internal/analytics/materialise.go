@@ -208,6 +208,55 @@ func (m *Materialiser) refreshDay(ctx context.Context, tenantID uuid.UUID, day t
 		return err
 	}
 
+	// CSAT rollup -- update the per-channel rows in place. Counts and
+	// averages key on responded_at (the day the customer voted), not
+	// on when the ticket resolved -- a vote that arrives 3 days later
+	// belongs to the day it landed so the dashboard reflects current
+	// satisfaction trends.
+	if _, err := tx.Exec(ctx, `
+		WITH agg AS (
+		  SELECT s.tenant_id, c.channel,
+		         COUNT(*) AS responses,
+		         AVG(s.score)::numeric(3,2) AS avg_score
+		  FROM csat_surveys s
+		  JOIN tickets t        ON t.id = s.ticket_id
+		  JOIN conversations c  ON c.id = t.conversation_id
+		  WHERE s.tenant_id = $1
+		    AND s.responded_at::date = $2
+		    AND s.revoked_at IS NULL
+		  GROUP BY s.tenant_id, c.channel
+		)
+		UPDATE mart_tickets_daily m
+		SET csat_responses = agg.responses,
+		    csat_avg       = agg.avg_score
+		FROM agg
+		WHERE m.tenant_id = agg.tenant_id
+		  AND m.channel  = agg.channel
+		  AND m.day      = $2`,
+		tenantID, day); err != nil {
+		return err
+	}
+	// And update the synthetic 'all' row from the per-channel data.
+	if _, err := tx.Exec(ctx, `
+		UPDATE mart_tickets_daily m
+		SET csat_responses = sub.responses,
+		    csat_avg       = sub.weighted_avg
+		FROM (
+		  SELECT tenant_id,
+		         SUM(csat_responses) AS responses,
+		         (SUM(csat_avg * csat_responses)
+		            / NULLIF(SUM(csat_responses), 0))::numeric(3,2) AS weighted_avg
+		  FROM mart_tickets_daily
+		  WHERE tenant_id = $1 AND day = $2 AND channel <> 'all'
+		  GROUP BY tenant_id
+		) sub
+		WHERE m.tenant_id = sub.tenant_id
+		  AND m.channel = 'all'
+		  AND m.day = $2`,
+		tenantID, day); err != nil {
+		return err
+	}
+
 	// Per-agent rollup.
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM mart_agents_daily WHERE tenant_id = $1 AND day = $2`,
