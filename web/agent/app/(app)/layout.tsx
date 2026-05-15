@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { auth, signOut } from "@/lib/auth";
 import { redirect } from "next/navigation";
+import { RealtimeRefresher } from "@/components/RealtimeRefresher";
 
 // Auth-guarded shell. The middleware also redirects unauthenticated
 // requests, but checking here is the defense-in-depth layer per the
@@ -39,6 +40,9 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         </form>
       </aside>
       <main className="overflow-hidden">{children}</main>
+      {/* One subscriber per app load; triggers router.refresh() on
+          any inbound WS frame so RSCs re-render with fresh data. */}
+      <RealtimeRefresher wsURL={`${process.env.NEXT_PUBLIC_WS_URL ?? ""}/ws/agent`} />
     </div>
   );
 }
