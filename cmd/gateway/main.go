@@ -107,6 +107,20 @@ func run() error {
 		return err
 	}
 
+	// Ticket-service ingress consumer: turns ingress.> events into
+	// customer/conversation/ticket/message rows. Runs in a goroutine
+	// for the gateway's life. In a fully-extracted topology this lives
+	// in its own binary; for the modular-monolith default it rides
+	// inside the gateway process.
+	ticketRepo := ticket.NewRepo(pool)
+	ingress := ticket.NewConsumer(js, ticketRepo)
+	go func() {
+		if err := ingress.Run(ctx); err != nil {
+			slog.Error("ticket: ingress consumer exited",
+				slog.String("err", err.Error()))
+		}
+	}()
+
 	verifier, err := auth.NewVerifier(ctx, oidcCfg)
 	if err != nil {
 		return err
@@ -118,7 +132,7 @@ func run() error {
 	// the dedicated FB connector binary is extracted in a later phase.
 	r := newRouter(routerDeps{
 		Verifier:   verifier,
-		Tickets:    ticket.NewRepo(pool),
+		Tickets:    ticketRepo,
 		Pinger:     pool,
 		Supervisor: &supervisor.API{Repo: supervisor.NewRepo(pool)},
 		Analytics:  &analytics.API{M: analytics.New(pool)},
