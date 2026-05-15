@@ -23,6 +23,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
         <nav className="flex flex-col gap-1 text-sm">
           <NavLink href="/inbox">Inbox</NavLink>
           <NavLink href="/supervisor">Supervisor</NavLink>
+          <NavLink href="/channels">Channels</NavLink>
         </nav>
         <form
           action={async () => {

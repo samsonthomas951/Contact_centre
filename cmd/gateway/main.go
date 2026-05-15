@@ -23,6 +23,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -75,10 +76,14 @@ func run() error {
 	})
 
 	var (
-		httpCfg  httpserver.Config
-		dbCfg    postgres.Config
-		oidcCfg  auth.Config
-		natsCfg  natsx.Config
+		httpCfg   httpserver.Config
+		dbCfg     postgres.Config
+		oidcCfg   auth.Config
+		natsCfg   natsx.Config
+		fbCfg     facebook.OAuthConfig
+		demoKey   = struct {
+			Key string `env:"FB_DEMO_KEY" default:"demo-only-do-not-use-in-prod"`
+		}{}
 	)
 	if err := config.Load("", &httpCfg); err != nil {
 		return err
@@ -90,6 +95,12 @@ func run() error {
 		return err
 	}
 	if err := config.Load("", &natsCfg); err != nil {
+		return err
+	}
+	if err := config.Load("", &fbCfg); err != nil {
+		return err
+	}
+	if err := config.Load("", &demoKey); err != nil {
 		return err
 	}
 
@@ -135,6 +146,28 @@ func run() error {
 			jetstream.WithMsgID(ticketID.String()+":"+string(to)))
 	}
 
+	// Outbound fan-out: every direction=out message becomes one job
+	// on outbound.<channel>.text. The per-channel sender (production:
+	// facebook.Sender etc.; demo: outbound-stub binary) ships it.
+	ticketRepo.OnOutbound = func(ctx context.Context, tenantID, ticketID, customerID uuid.UUID, channel, body string) {
+		ev, err := json.Marshal(struct {
+			TenantID   uuid.UUID `json:"tenant_id"`
+			TicketID   uuid.UUID `json:"ticket_id"`
+			CustomerID uuid.UUID `json:"customer_id"`
+			Channel    string    `json:"channel"`
+			Body       string    `json:"body"`
+			Kind       string    `json:"kind"`
+		}{tenantID, ticketID, customerID, channel, body, "agent_reply"})
+		if err != nil {
+			return
+		}
+		// No MsgID dedupe -- each agent reply is a distinct
+		// intentional send. Two replies with identical bodies still
+		// produce two outbound jobs.
+		_, _ = js.Publish(ctx,
+			fmt.Sprintf("outbound.%s.text", channel), ev)
+	}
+
 	ingress := ticket.NewConsumer(js, ticketRepo)
 	go func() {
 		if err := ingress.Run(ctx); err != nil {
@@ -159,14 +192,36 @@ func run() error {
 		return err
 	}
 
-	// FB webhook is wired up only when the operator supplies the
-	// secrets; without them we leave it unmounted and the gateway still
-	// serves the rest. Real wiring (NATS, tenant resolver) lands when
-	// the dedicated FB connector binary is extracted in a later phase.
+	// FB webhook + OAuth wire up when FB_APP_ID + FB_APP_SECRET are
+	// set. The webhook handler resolves tenants by page_id from
+	// fb_pages (populated by the OAuth callback). Without these env
+	// vars the routes simply don't mount and the gateway still serves
+	// the rest -- agent UI demo flow doesn't depend on FB.
+	var fbHandler *facebook.WebhookHandler
+	var fbOAuth *facebook.OAuthHandler
+	if fbCfg.AppID != "" && fbCfg.AppSecret != "" {
+		fbHandler = &facebook.WebhookHandler{
+			AppSecret: fbCfg.AppSecret,
+			VerifyTok: fbCfg.AppSecret, // demo: reuse secret as verify token; production uses a separate value
+			Resolver:  facebook.NewPGTenantResolver(pool),
+			JS:        js,
+		}
+		demoCrypter, err := facebook.NewDemoCrypter(demoKey.Key)
+		if err != nil {
+			return err
+		}
+		fbOAuth = facebook.NewOAuthHandler(fbCfg, pool, demoCrypter)
+		slog.Info("fb: OAuth + webhook wired",
+			slog.String("app_id", fbCfg.AppID),
+			slog.String("redirect_uri", fbCfg.RedirectURI))
+	}
+
 	r := newRouter(routerDeps{
 		Verifier:   verifier,
 		Tickets:    ticketRepo,
 		Pinger:     pool,
+		FB:         fbHandler,
+		FBOAuth:    fbOAuth,
 		Supervisor: &supervisor.API{Repo: supervisor.NewRepo(pool)},
 		Analytics:  &analytics.API{M: analytics.New(pool)},
 		Onboarding: &onboarding.API{
@@ -203,6 +258,7 @@ type routerDeps struct {
 	Tickets    *ticket.Repo
 	Pinger     pinger
 	FB         *facebook.WebhookHandler
+	FBOAuth    *facebook.OAuthHandler
 	X          *xconn.WebhookHandler
 	WA         *whatsapp.WebhookHandler
 	IG         *instagram.WebhookHandler
@@ -219,8 +275,8 @@ type routerDeps struct {
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs :=
-		d.Verifier, d.Tickets, d.Pinger, d.FB, d.X, d.WA, d.IG, d.Widget,
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs :=
+		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
 		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic
 	r := chi.NewRouter()
 
@@ -286,12 +342,42 @@ func newRouter(d routerDeps) http.Handler {
 		// out of the analytics rollups.
 		r.Mount("/csat", cs.Routes())
 	}
+	if fbo != nil {
+		// FB OAuth connect flow -- the brand admin's "Connect a
+		// Facebook Page" button. /start redirects to Meta consent;
+		// /callback gets the code back, exchanges + subscribes the
+		// Page. Public (no bearer) because Meta drives the redirect;
+		// CSRF + tenant routing via state param.
+		r.Get("/v1/connect/fb", fbo.Start)
+		r.Get("/v1/connect/fb/callback", fbo.Callback)
+	}
 
 	// Authenticated v1 surface.
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(v))
 		r.Get("/me", auth.MeHandler)
 		r.Mount("/tickets", (&ticket.API{Repo: tr}).Routes())
+		// Connected-Pages list lives behind auth (each tenant sees
+		// only its own). The OAuth start/callback are public because
+		// Meta drives the redirect, but reading the list isn't.
+		if fbo != nil {
+			r.Get("/connect/fb/pages", func(w http.ResponseWriter, req *http.Request) {
+				id, err := auth.FromContext(req.Context())
+				if err != nil {
+					http.Error(w, "unauthorized", http.StatusUnauthorized)
+					return
+				}
+				pages, err := fbo.ListConnected(req.Context(), id.TenantID)
+				if err != nil {
+					slog.ErrorContext(req.Context(), "fb: list connected",
+						slog.String("err", err.Error()))
+					http.Error(w, "lookup failed", http.StatusInternalServerError)
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"pages": pages})
+			})
+		}
 		if docs != nil {
 			r.Mount("/documents", docs.Routes())
 		}

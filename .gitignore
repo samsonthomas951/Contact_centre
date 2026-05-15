@@ -45,3 +45,6 @@ api/gen/
 # Docker
 docker-compose.override.yml
 .claude/
+
+# Demo
+.demo-tunnel-url

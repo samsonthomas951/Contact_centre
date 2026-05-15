@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Acme Widget Demo</title>
+  <style>
+    body { font: 16px/1.6 system-ui, sans-serif; max-width: 780px; margin: 3rem auto;
+           padding: 0 1.5rem; color: #1f2937; background: #f8fafc; }
+    h1   { font-size: 2rem; margin-bottom: 0.25rem; }
+    .lede { color: #475569; font-size: 1.1rem; }
+    .card { background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+           padding: 1.5rem; margin-top: 2rem; box-shadow: 0 1px 4px rgba(0,0,0,.04); }
+    code { background: #f1f5f9; padding: 0.1rem 0.4rem; border-radius: 4px;
+           font-size: 0.9em; }
+    .step { display: flex; gap: 1rem; margin-bottom: 1rem; }
+    .step b { background: #0b6df0; color: #fff; border-radius: 999px;
+              width: 1.6rem; height: 1.6rem; display: inline-flex;
+              align-items: center; justify-content: center;
+              font-size: 0.85rem; flex-shrink: 0; }
+  </style>
+</head>
+<body>
+  <h1>Acme Demo Site</h1>
+  <p class="lede">
+    This is a stand-in for a brand's marketing site. The chat bubble in
+    the bottom-right is the embeddable Contact Centre widget. Anything
+    you type goes through the same pipeline as a Facebook DM or X
+    mention -- it lands as a real ticket in the agent UI inbox.
+  </p>
+
+  <div class="card">
+    <h2>Try it</h2>
+    <div class="step"><b>1</b><div>Click the 💬 bubble bottom-right.</div></div>
+    <div class="step"><b>2</b><div>Type a message and send.</div></div>
+    <div class="step"><b>3</b><div>
+      Open the agent UI at <code>http://localhost:3000</code>, log in as
+      <code>ada@demo.local</code>, and watch your message appear in the
+      inbox in real time.
+    </div></div>
+  </div>
+
+  <div class="card">
+    <h2>What's actually happening</h2>
+    <ol>
+      <li>Widget opens a WebSocket to <code>ws://localhost:8080/ws/widget</code>.</li>
+      <li>Origin header (<code>http://localhost:8000</code>) is checked
+        against the <code>widget_sites</code> table; matched -> upgrade.</li>
+      <li>Each <code>type:"message"</code> frame becomes an
+        <code>ingress.widget.message</code> JetStream event.</li>
+      <li>The Ticket Service consumer creates a customer +
+        conversation + ticket + message row.</li>
+      <li>The agent UI (NextJS) renders the new ticket via a server
+        component refresh triggered by the realtime push.</li>
+      <li>Agent replies through the composer; reply goes back through
+        <code>outbound.widget.text</code> to the outbound stub.</li>
+    </ol>
+  </div>
+
+  <!-- Embedded widget. data-endpoint MUST point at the gateway. -->
+  <script
+    src="/widget.js"
+    data-endpoint="ws://localhost:8080/ws/widget"
+    data-embed-key="demo-key"
+    data-consent-text="By chatting you accept the Acme Demo privacy notice."
+    async></script>
+</body>
+</html>

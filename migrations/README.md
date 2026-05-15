@@ -22,6 +22,7 @@ the down then the up again to verify reversibility.
 | 0014 | `voice_numbers`, `voice_calls` + `voice_call_state` enum — Africa's Talking / Twilio voice connector |
 | 0015 | `webhook_subscriptions`, `webhook_deliveries` — tenant outbound webhooks with HMAC sig + per-attempt audit log |
 | 0016 | `csat_surveys` + `mart_tickets_daily.csat_*` columns — post-resolution CSAT collection + analytics rollup |
+| 0017 | `outbound_log` — demo / dev table the outbound-stub worker writes to instead of calling real platform APIs |
 
 ## Running
 

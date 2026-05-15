@@ -29,10 +29,19 @@ type Repo struct {
 	// `ticket.state_change` so subscribers (CSAT dispatcher, webhook
 	// fan-out, audit) react.
 	OnStateChange StateChangeListener
+	// OnOutbound is fired after AppendMessage commits an outbound
+	// (direction=out) message. nil is a no-op. The gateway wires it
+	// to a JetStream publisher on outbound.<channel>.text so per-
+	// channel sender workers (FB Sender, X v2, WA Cloud, ...) ship.
+	OnOutbound OutboundListener
 }
 
 // StateChangeListener is the post-commit hook signature.
 type StateChangeListener func(ctx context.Context, tenantID, ticketID uuid.UUID, from, to State)
+
+// OutboundListener fires after a `direction=out` message is persisted.
+// channel is the conversation's channel ('fb', 'x', 'wa', ...).
+type OutboundListener func(ctx context.Context, tenantID, ticketID, customerID uuid.UUID, channel, body string)
 
 // NewRepo binds a Repo to a pool.
 func NewRepo(pool *pgxpool.Pool) *Repo { return &Repo{pool: pool} }
@@ -224,24 +233,28 @@ type AppendMessageParams struct {
 // AppendMessage records a message and stamps first_response_at on the
 // ticket if it's the first outbound from an agent.
 func (r *Repo) AppendMessage(ctx context.Context, p AppendMessageParams) (*Message, error) {
-	if p.Attachments == nil {
-		p.Attachments = []uuid.UUID{}
-	}
-
 	tx, err := r.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("ticket: begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	// pgx's QueryExecModeExec (which we use for pgbouncer compat)
+	// can't encode []uuid.UUID natively because there's no OID from
+	// a prepared statement. Convert to []string and let PG cast.
+	att := make([]string, len(p.Attachments))
+	for i, u := range p.Attachments {
+		att[i] = u.String()
+	}
+
 	row := tx.QueryRow(ctx, `
 		INSERT INTO messages
 		  (tenant_id, ticket_id, direction, agent_id, body, attachments, platform_message_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7)
+		VALUES ($1,$2,$3,$4,$5,$6::uuid[],$7)
 		RETURNING id, tenant_id, ticket_id, direction, agent_id, body,
 		          attachments, platform_message_id, created_at`,
 		p.TenantID, p.TicketID, p.Direction, p.AgentID, p.Body,
-		p.Attachments, p.PlatformMessageID,
+		att, p.PlatformMessageID,
 	)
 	m, err := scanMessage(row)
 	if err != nil {
@@ -259,6 +272,23 @@ func (r *Repo) AppendMessage(ctx context.Context, p AppendMessageParams) (*Messa
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
+
+	// Post-commit fan-out for outbound messages. We look up the
+	// channel + customer via the conversation join after the commit
+	// so the listener has everything it needs to address the right
+	// per-channel sender (outbound.<channel>.text).
+	if p.Direction == DirectionOut && r.OnOutbound != nil {
+		var channel string
+		var customerID uuid.UUID
+		if err := r.pool.QueryRow(ctx, `
+			SELECT c.channel, c.customer_id
+			FROM tickets t
+			JOIN conversations c ON c.id = t.conversation_id
+			WHERE t.id = $1`, p.TicketID).Scan(&channel, &customerID); err == nil {
+			r.OnOutbound(ctx, p.TenantID, p.TicketID, customerID, channel, p.Body)
+		}
+	}
+
 	return m, nil
 }
 

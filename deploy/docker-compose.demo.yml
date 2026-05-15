@@ -1,0 +1,181 @@
+# Demo stack — single-host, plaintext, no Zitadel, no Traefik, no
+# Let's Encrypt. Auth runs in DEMO_MODE so the agent UI uses a stub
+# credentials login; the gateway accepts a "demo:<agent_uuid>" bearer
+# and synthesises the Identity in-process.
+#
+# Bring up:
+#   make demo
+#
+# Tear down:
+#   make demo-down
+#
+# Hosts:
+#   http://localhost:8080   gateway API
+#   http://localhost:8081   WS service
+#   http://localhost:9001   MinIO console (minioadmin / minioadmin)
+#   http://localhost:3000   Agent UI (after `npm run dev` in web/agent)
+
+name: contactcentre-demo
+
+networks:
+  cc:
+    driver: bridge
+
+volumes:
+  pgdata: {}
+  miniodata: {}
+  natsdata: {}
+  clamavdb: {}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: contactcentre
+      POSTGRES_USER: contactcentre
+      POSTGRES_PASSWORD: demo
+      PGDATA: /var/lib/postgresql/data/pgdata
+    # Non-default host port: many dev machines run Postgres on 5432.
+    ports: ["55432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [cc]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U contactcentre -d contactcentre"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    ports: ["56379:6379"]
+    networks: [cc]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 2s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports: ["54222:4222"]
+    volumes:
+      - natsdata:/data
+    networks: [cc]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+      # Built-in KMS so SSE-S3 PUTs work without an external KES.
+      MINIO_KMS_SECRET_KEY: "test-key:AEi7HYoH1VKwaOPj7XGmAaufKHVjHFTflLULqFHL4KU="
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    networks: [cc]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  clamav:
+    image: clamav/clamav:latest
+    ports: ["3310:3310"]
+    volumes:
+      - clamavdb:/var/lib/clamav
+    networks: [cc]
+    # Long start_period: ClamAV's first run downloads ~250 MB of
+    # signatures from clamav.net. The demo seed/script tolerates
+    # ClamAV being slow to come up.
+    healthcheck:
+      test: ["CMD", "clamdcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 5m
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+      args:
+        BINARY: gateway
+        VERSION: demo
+    depends_on:
+      postgres:   { condition: service_healthy }
+      redis:      { condition: service_healthy }
+      nats:       { condition: service_healthy }
+      minio:      { condition: service_healthy }
+    environment:
+      HTTP_ADDR:                   ":8080"
+      DATABASE_URL:                "postgres://contactcentre:demo@postgres:5432/contactcentre?sslmode=disable"
+      NATS_URL:                    "nats://nats:4222"
+      OIDC_ISSUER_URL:             "http://demo-oidc"   # unused in DEMO_MODE
+      OIDC_AUDIENCE:               "demo"
+      AUTH_DEMO_MODE:              "1"                   # bypass JWT verify
+      MINIO_ENDPOINT:              "minio:9000"
+      MINIO_ACCESS_KEY:            "minioadmin"
+      MINIO_SECRET_KEY:            "minioadmin"
+      MINIO_BUCKET:                "docs"
+    ports: ["8080:8080"]
+    networks: [cc]
+    restart: unless-stopped
+
+  ws:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+      args:
+        BINARY: ws
+        VERSION: demo
+    depends_on:
+      redis: { condition: service_healthy }
+    environment:
+      HTTP_ADDR:        ":8081"
+      OIDC_ISSUER_URL:  "http://demo-oidc"
+      OIDC_AUDIENCE:    "demo"
+      AUTH_DEMO_MODE:   "1"
+      REDIS_ADDR:       "redis:6379"
+    ports: ["8081:8081"]
+    networks: [cc]
+    restart: unless-stopped
+
+  # cloudflared "quick tunnel" — one-shot https://*.trycloudflare.com
+  # URL with no signup. Meta needs HTTPS to deliver webhooks; this is
+  # the cheapest way to expose the local gateway. The URL changes
+  # every time the container restarts; print it via `make demo-tunnel`.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: ["tunnel", "--no-autoupdate", "--url", "http://gateway:8080"]
+    depends_on:
+      gateway: { condition: service_started }
+    networks: [cc]
+    restart: unless-stopped
+
+  outbound-stub:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+      args:
+        BINARY: outbound-stub
+        VERSION: demo
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats:     { condition: service_healthy }
+    environment:
+      DATABASE_URL: "postgres://contactcentre:demo@postgres:5432/contactcentre?sslmode=disable"
+      NATS_URL:     "nats://nats:4222"
+    networks: [cc]
+    restart: unless-stopped
