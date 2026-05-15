@@ -48,6 +48,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/httpserver"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/logging"
+	"github.com/samsonthomas951/contact-centre/internal/pkg/natsx"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/postgres"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/secheaders"
 	"github.com/samsonthomas951/contact-centre/internal/ticket"
@@ -71,9 +72,10 @@ func run() error {
 	})
 
 	var (
-		httpCfg httpserver.Config
-		dbCfg   postgres.Config
-		oidcCfg auth.Config
+		httpCfg  httpserver.Config
+		dbCfg    postgres.Config
+		oidcCfg  auth.Config
+		natsCfg  natsx.Config
 	)
 	if err := config.Load("", &httpCfg); err != nil {
 		return err
@@ -84,6 +86,9 @@ func run() error {
 	if err := config.Load("", &oidcCfg); err != nil {
 		return err
 	}
+	if err := config.Load("", &natsCfg); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	pool, err := postgres.Connect(ctx, dbCfg)
@@ -91,6 +96,16 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+
+	nc, js, err := natsx.Connect(ctx, natsCfg)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = nc.Drain() }()
+
+	if err := natsx.EnsureStreams(ctx, js); err != nil {
+		return err
+	}
 
 	verifier, err := auth.NewVerifier(ctx, oidcCfg)
 	if err != nil {
@@ -112,12 +127,10 @@ func run() error {
 			Agents:  onboarding.NewAgentRepo(pool),
 		},
 		DSR: &dsr.API{Repo: dsr.NewRepo(pool)},
-		// JS is left nil so the widget handler 5xx's when JetStream is
-		// not wired; production assignment lands when the connector
-		// gets its own binary.
 		Widget: &widget.WebsocketHandler{
 			Sites:    widget.NewPGSiteLookup(pool),
 			Visitors: widget.NewPGVisitorStore(pool),
+			JS:       js,
 		},
 		CSATPublic: &csat.PublicAPI{Repo: csat.NewRepo(pool)},
 	})

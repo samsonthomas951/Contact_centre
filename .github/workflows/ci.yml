@@ -92,6 +92,14 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: true
 
+      - name: Start NATS JetStream
+        run: |
+          docker run -d --name cc-nats -p 4222:4222 nats:2.10-alpine -js
+          for i in {1..30}; do
+            if (echo > /dev/tcp/127.0.0.1/4222) 2>/dev/null; then break; fi
+            sleep 0.2
+          done
+
       - name: Run integration tests
         env:
           AUDIT_TEST_DB_URL:        postgres://postgres:test@localhost:5432/cctest?sslmode=disable
@@ -105,7 +113,8 @@ jobs:
           CSAT_TEST_DB_URL:         postgres://postgres:test@localhost:5432/cctest?sslmode=disable
           REALTIME_TEST_REDIS_ADDR:  localhost:6379
           RATELIMIT_TEST_REDIS_ADDR: localhost:6379
-        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/... ./internal/analytics/... ./internal/onboarding/... ./internal/dsr/... ./internal/csat/... ./internal/pkg/ratelimit/...
+          NATSX_TEST_URL:            nats://localhost:4222
+        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/... ./internal/analytics/... ./internal/onboarding/... ./internal/dsr/... ./internal/csat/... ./internal/pkg/ratelimit/... ./internal/pkg/natsx/...
 
   migrations-reversibility:
     runs-on: ubuntu-latest
