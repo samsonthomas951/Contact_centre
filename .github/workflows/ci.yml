@@ -114,7 +114,9 @@ jobs:
           REALTIME_TEST_REDIS_ADDR:  localhost:6379
           RATELIMIT_TEST_REDIS_ADDR: localhost:6379
           NATSX_TEST_URL:            nats://localhost:4222
-        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/... ./internal/analytics/... ./internal/onboarding/... ./internal/dsr/... ./internal/csat/... ./internal/pkg/ratelimit/... ./internal/pkg/natsx/...
+          WEBHOOKS_TEST_DB_URL:      postgres://postgres:test@localhost:5432/cctest?sslmode=disable
+          WEBHOOKS_TEST_NATS_URL:    nats://localhost:4222
+        run: go test -tags=integration -count=1 -race ./internal/audit/... ./internal/ticket/... ./internal/routing/... ./internal/sla/... ./internal/realtime/... ./internal/supervisor/... ./internal/analytics/... ./internal/onboarding/... ./internal/dsr/... ./internal/csat/... ./internal/pkg/ratelimit/... ./internal/pkg/natsx/... ./internal/webhooks/...
 
   migrations-reversibility:
     runs-on: ubuntu-latest
