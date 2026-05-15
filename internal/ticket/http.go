@@ -3,6 +3,7 @@ package ticket
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -88,8 +89,50 @@ func (a *API) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) list(w http.ResponseWriter, r *http.Request) {
-	// Phase 0 stub: a fuller list/search lands with the routing engine.
-	writeJSON(w, http.StatusOK, map[string]any{"tickets": []Ticket{}})
+	id, err := auth.FromContext(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+
+	p := ListParams{TenantID: id.TenantID}
+
+	// `?mine=1` scopes to the caller's own queue (the agent inbox view).
+	// Default behaviour for an agent role is mine=1; supervisors get the
+	// full tenant view by default and can opt back into mine=1.
+	mine := r.URL.Query().Get("mine") == "1" ||
+		(r.URL.Query().Get("mine") == "" && !id.HasRole(auth.RoleSupervisor, auth.RoleAdmin))
+	if mine {
+		agent := id.AgentID
+		p.AssignedAgentID = &agent
+	}
+
+	// `?state=open&state=pending` filters; defaults to "open work".
+	if vs, ok := r.URL.Query()["state"]; ok {
+		states := make([]State, 0, len(vs))
+		for _, s := range vs {
+			st := State(s)
+			if err := st.Validate(); err == nil {
+				states = append(states, st)
+			}
+		}
+		p.States = states
+	}
+
+	if l := r.URL.Query().Get("limit"); l != "" {
+		// Tolerate junk; the repo clamps to [1, 200].
+		var n int
+		_, _ = fmt.Sscanf(l, "%d", &n)
+		p.Limit = n
+	}
+
+	tickets, err := a.Repo.List(r.Context(), p)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "ticket: list", slog.String("err", err.Error()))
+		writeErr(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tickets": tickets})
 }
 
 func (a *API) patchState(w http.ResponseWriter, r *http.Request) {

@@ -76,6 +76,65 @@ func (r *Repo) GetTicket(ctx context.Context, tenantID, id uuid.UUID) (*Ticket, 
 	return t, err
 }
 
+// ListParams selects which tickets the inbox shows. State filter is
+// optional; an empty States slice returns "open work" (everything that
+// isn't resolved/closed). AssignedAgentID is optional too -- nil
+// returns the whole tenant view, useful for supervisors.
+type ListParams struct {
+	TenantID        uuid.UUID
+	States          []State
+	AssignedAgentID *uuid.UUID
+	// Limit caps the page; 0 falls back to 50, max 200.
+	Limit int
+}
+
+// List returns tickets for the agent inbox view. Sorted by priority
+// (1=urgent first), then created_at ascending so the oldest urgent
+// ticket lands at the top -- the order an agent should work them.
+//
+// Keyset pagination is deferred to the next iteration; the supervisor
+// dashboard hits a different endpoint and the agent inbox is small
+// enough at <100 agents per tenant that LIMIT alone suffices.
+func (r *Repo) List(ctx context.Context, p ListParams) ([]Ticket, error) {
+	if p.Limit <= 0 || p.Limit > 200 {
+		p.Limit = 50
+	}
+	states := p.States
+	if len(states) == 0 {
+		states = []State{StateNew, StateOpen, StatePending, StateOnHold, StateReopened}
+	}
+	stateStrs := make([]string, len(states))
+	for i, s := range states {
+		stateStrs[i] = string(s)
+	}
+
+	rows, err := r.pool.Query(ctx, `
+		SELECT id, tenant_id, conversation_id, state, priority, required_skills,
+		       assigned_agent_id, sla_first_response_due, sla_resolution_due,
+		       first_response_at, resolved_at, closed_at, created_at, updated_at
+		FROM tickets
+		WHERE tenant_id = $1
+		  AND state::text = ANY($2)
+		  AND ($3::uuid IS NULL OR assigned_agent_id = $3)
+		ORDER BY priority ASC, created_at ASC
+		LIMIT $4`,
+		p.TenantID, stateStrs, p.AssignedAgentID, p.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]Ticket, 0, p.Limit)
+	for rows.Next() {
+		t, err := scanTicket(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *t)
+	}
+	return out, rows.Err()
+}
+
 // ChangeState moves the ticket to `to` if the transition is legal.
 // resolved_at / closed_at are stamped automatically when the target state
 // is one of those terminal-ish states.
