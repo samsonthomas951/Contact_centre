@@ -708,6 +708,45 @@
       ]
     },
     {
+      "name": "8b. Meta callbacks (public — HMAC-signed)",
+      "item": [
+        {
+          "name": "Status page (no-data baseline)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/v1/meta/deletion-status/00000000-0000-0000-0000-000000000000",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "meta", "deletion-status", "00000000-0000-0000-0000-000000000000"]
+            },
+            "description": "Public status page. Returns HTML. Used to verify the public reachability before submitting your data-deletion URL to Meta for App Review."
+          }
+        },
+        {
+          "name": "Data deletion — invalid signature (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                { "key": "signed_request", "value": "AAAA.AAAA" }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/meta/data-deletion",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "meta", "data-deletion"]
+            },
+            "description": "Negative test: signed_request with a bogus HMAC must be rejected with 401. Confirms the signature check is wired before any DSR is opened."
+          }
+        }
+      ]
+    },
+    {
       "name": "9. CSAT (public — no auth)",
       "item": [
         {

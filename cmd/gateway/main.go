@@ -47,6 +47,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/csat"
 	"github.com/samsonthomas951/contact-centre/internal/document"
 	"github.com/samsonthomas951/contact-centre/internal/dsr"
+	"github.com/samsonthomas951/contact-centre/internal/meta"
 	"github.com/samsonthomas951/contact-centre/internal/onboarding"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/supervisor"
@@ -93,6 +94,13 @@ func run() error {
 			Password string `env:"REDIS_PASSWORD"`
 			DB       int    `env:"REDIS_DB" default:"0"`
 		}{}
+		// publicURL is what we hand back to Meta's data-deletion
+		// callback so the user has a URL to revisit. Defaults to the
+		// local gateway for the demo; production wires its public
+		// HTTPS hostname.
+		publicCfg = struct {
+			URL string `env:"PUBLIC_BASE_URL" default:"http://localhost:8080"`
+		}{}
 	)
 	if err := config.Load("", &httpCfg); err != nil {
 		return err
@@ -113,6 +121,9 @@ func run() error {
 		return err
 	}
 	if err := config.Load("", &redisCfg); err != nil {
+		return err
+	}
+	if err := config.Load("", &publicCfg); err != nil {
 		return err
 	}
 
@@ -292,6 +303,12 @@ func run() error {
 			Widgets: onboarding.NewWidgetRepo(pool),
 		},
 		DSR: &dsr.API{Repo: dsr.NewRepo(pool)},
+		Meta: &meta.Handler{
+			Pool:          pool,
+			DSR:           dsr.NewRepo(pool),
+			AppSecret:     fbCfg.AppSecret,
+			PublicBaseURL: publicCfg.URL,
+		},
 		Widget: &widget.WebsocketHandler{
 			Sites:    widget.NewPGSiteLookup(pool),
 			Visitors: widget.NewPGVisitorStore(pool),
@@ -333,14 +350,15 @@ type routerDeps struct {
 	Onboarding *onboarding.API
 	DSR        *dsr.API
 	CSATPublic *csat.PublicAPI
+	Meta       *meta.Handler
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
-		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic
+		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -413,6 +431,14 @@ func newRouter(d routerDeps) http.Handler {
 		// CSRF + tenant routing via state param.
 		r.Get("/v1/connect/fb", fbo.Start)
 		r.Get("/v1/connect/fb/callback", fbo.Callback)
+	}
+	if mh != nil {
+		// Meta data-deletion + deauthorize callbacks. Public because
+		// Meta does not send a bearer; HMAC signature on the body is
+		// the load-bearing defence (verified inside the handler).
+		// Status page is public so users can revisit without an
+		// account; the URL is the confirmation_code we returned.
+		r.Mount("/v1/meta", mh.Routes())
 	}
 
 	// Authenticated v1 surface.

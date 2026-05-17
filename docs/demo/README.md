@@ -292,6 +292,45 @@ docker logs contactcentre-demo-wa-outbound-1
 Look for the `shipped to Meta` line with the returned `message_id` (or
 `wamid` for WhatsApp).
 
+## Meta App Review readiness
+
+Before any *other* brand's Pages / IG accounts / WA numbers can
+connect through your Meta App, Meta requires you to pass App Review.
+The hard prerequisite is a working **data deletion callback**, plus a
+hosted **privacy policy** and **data deletion instructions**.
+
+The endpoint is live at:
+
+```
+POST /v1/meta/data-deletion       # Meta's signed_request callback
+POST /v1/meta/deauthorize         # same shape, fires when user removes the app
+GET  /v1/meta/deletion-status/{code}   # public HTML status page
+```
+
+Verification works against `FB_APP_SECRET` (HMAC-SHA256 of the
+base64-url payload). When the signature checks out, the handler opens
+one `dsr.KindErasure` request per tenant whose customers reference
+the supplied `user_id` and returns:
+
+```json
+{
+  "url": "https://<PUBLIC_BASE_URL>/v1/meta/deletion-status/<code>",
+  "confirmation_code": "<uuid v5 of user_id>"
+}
+```
+
+The status page lists every DSR opened under that code and its
+current state (`received` / `in_progress` / `fulfilled`).
+
+Set `PUBLIC_BASE_URL` on the gateway to your public hostname (defaults
+to `http://localhost:8080` for the demo). Submit
+`<PUBLIC_BASE_URL>/v1/meta/data-deletion` as the Data Deletion
+Callback URL during App Review.
+
+The full submission checklist + privacy-policy and instructions
+templates live in `docs/legal/`. Walk that doc before clicking
+**Submit for Review** in the Meta dashboard.
+
 ## What's NOT in this demo
 
 - **X (Twitter)** — different OAuth shape, plus X removed free API
