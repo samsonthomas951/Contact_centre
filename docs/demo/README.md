@@ -223,21 +223,31 @@ make demo-down                               # stops + removes containers + volu
 
 ## What outbound looks like now
 
-Two NATS consumers split the `outbound.>` workqueue:
+Four NATS consumers split the `outbound.>` workqueue, three real and
+one stub:
 
 | Subject | Consumer | Action |
 |---|---|---|
-| `outbound.fb.text` | `fb-outbound` | Decrypts the Page token via `PGPageStore`, POSTs to `graph.facebook.com/<ver>/<page>/messages`, writes `sent_fb` (or `failed_fb` / `no_route`) to `outbound_log` |
-| `outbound.{x,wa,ig,widget,voice}.*` | `outbound-stub` | Writes `agent_reply` to `outbound_log` — demo placeholder until per-channel senders land |
+| `outbound.fb.text` | `fb-outbound` | `PGPageStore` decrypt → POST `graph.facebook.com/<ver>/<page>/messages` → `sent_fb` / `failed_fb` / `no_route` in `outbound_log` |
+| `outbound.ig.text` | `ig-outbound` | `PGTokenStore` decrypt (Path 1 rides the linked Page) → POST `graph.facebook.com/<ver>/<ig_user>/messages` → `sent_ig` / `failed_ig` / `no_route` |
+| `outbound.wa.text` | `wa-outbound` | `PGNumberStore` decrypt → POST `graph.facebook.com/<ver>/<phone_number_id>/messages` (Bearer auth, WA payload) → `sent_wa` / `failed_wa` / `no_route` |
+| `outbound.{x,widget,voice}.*` | `outbound-stub` | Writes `agent_reply` to `outbound_log` — placeholder until those senders land |
 
-Until you complete the **Connect with Facebook** OAuth flow at least
-once, FB replies log as `no_route` (no `fb_pages` row → nowhere to
-send). The body and reason are preserved in `outbound_log` so the agent
-UI can surface "this reply didn't ship — connect a Page first."
+Until you complete **Connect with Facebook**, all three Meta workers
+log `no_route` (no rows in `fb_pages` / `ig_accounts` /
+`wa_phone_numbers` → nowhere to send). After OAuth, every Postman /
+agent-UI reply on an `fb` / `ig` / `wa` ticket actually calls Meta.
 
-After OAuth: every Postman / agent-UI reply on an `fb` ticket actually
-calls Meta. Watch `docker logs contactcentre-demo-fb-outbound-1` for
-the `shipped to Meta` line with the returned `message_id`.
+Watch the worker that matches the channel you're testing:
+
+```
+docker logs contactcentre-demo-fb-outbound-1
+docker logs contactcentre-demo-ig-outbound-1
+docker logs contactcentre-demo-wa-outbound-1
+```
+
+Look for the `shipped to Meta` line with the returned `message_id` (or
+`wamid` for WhatsApp).
 
 ## What's NOT in this demo
 
