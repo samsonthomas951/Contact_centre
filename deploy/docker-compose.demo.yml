@@ -179,3 +179,29 @@ services:
       NATS_URL:     "nats://nats:4222"
     networks: [cc]
     restart: unless-stopped
+
+  # Real Facebook outbound: subscribes to outbound.fb.text on JetStream
+  # and POSTs each agent reply to graph.facebook.com via facebook.Sender.
+  # Coexists with outbound-stub -- both are separate durable consumers,
+  # so the stub keeps writing the demo log row and this worker actually
+  # ships the message back to the customer. Requires that the operator
+  # has completed the Connect-with-Facebook OAuth flow at least once
+  # (otherwise no fb_pages row exists and the worker permanently
+  # terminates each job with "no route").
+  fb-outbound:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+      args:
+        BINARY: fb-outbound
+        VERSION: demo
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats:     { condition: service_healthy }
+    environment:
+      DATABASE_URL: "postgres://contactcentre:demo@postgres:5432/contactcentre?sslmode=disable"
+      NATS_URL:     "nats://nats:4222"
+      # MUST match what the gateway uses, else token decrypt fails.
+      FB_DEMO_KEY:  "demo-only-do-not-use-in-prod"
+    networks: [cc]
+    restart: unless-stopped

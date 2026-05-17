@@ -221,6 +221,24 @@ make demo-down                               # stops + removes containers + volu
 | DM sent but no ticket appears | tunnel rotated since you saved the webhook | re-run `make demo-tunnel`, update Meta's webhook URL |
 | Agent UI shows empty inbox after Facebook DM | role mismatch — Ada has agent role only sees mine=1 | sign in as `bob@demo.local` (supervisor) for full tenant view |
 
+## What outbound looks like now
+
+Two NATS consumers split the `outbound.>` workqueue:
+
+| Subject | Consumer | Action |
+|---|---|---|
+| `outbound.fb.text` | `fb-outbound` | Decrypts the Page token via `PGPageStore`, POSTs to `graph.facebook.com/<ver>/<page>/messages`, writes `sent_fb` (or `failed_fb` / `no_route`) to `outbound_log` |
+| `outbound.{x,wa,ig,widget,voice}.*` | `outbound-stub` | Writes `agent_reply` to `outbound_log` — demo placeholder until per-channel senders land |
+
+Until you complete the **Connect with Facebook** OAuth flow at least
+once, FB replies log as `no_route` (no `fb_pages` row → nowhere to
+send). The body and reason are preserved in `outbound_log` so the agent
+UI can surface "this reply didn't ship — connect a Page first."
+
+After OAuth: every Postman / agent-UI reply on an `fb` ticket actually
+calls Meta. Watch `docker logs contactcentre-demo-fb-outbound-1` for
+the `shipped to Meta` line with the returned `message_id`.
+
 ## What's NOT in this demo
 
 - **X (Twitter)** — different OAuth shape, plus X removed free API

@@ -102,14 +102,25 @@ func run() error {
 		return err
 	}
 
+	// Channels handled by real per-channel workers must be EXCLUDED
+	// from the stub's filter so JetStream's WorkQueuePolicy doesn't
+	// reject overlapping consumers. Right now only fb has a real
+	// worker (cmd/fb-outbound); when ig/wa/x/voice get real senders
+	// they get carved out the same way.
 	cons, err := js.CreateOrUpdateConsumer(ctx, "OUTBOUND", jetstream.ConsumerConfig{
-		Durable:        "outbound-stub",
-		FilterSubject:  "outbound.>",
-		AckPolicy:      jetstream.AckExplicitPolicy,
-		MaxAckPending:  16,
-		AckWait:        20 * time.Second,
-		MaxDeliver:     5,
-		DeliverPolicy:  jetstream.DeliverAllPolicy,
+		Durable: "outbound-stub",
+		FilterSubjects: []string{
+			"outbound.x.text",
+			"outbound.wa.text",
+			"outbound.ig.text",
+			"outbound.widget.text",
+			"outbound.voice.sms",
+		},
+		AckPolicy:     jetstream.AckExplicitPolicy,
+		MaxAckPending: 16,
+		AckWait:       20 * time.Second,
+		MaxDeliver:    5,
+		DeliverPolicy: jetstream.DeliverAllPolicy,
 	})
 	if err != nil {
 		return err
@@ -123,7 +134,7 @@ func run() error {
 
 	go func() { <-ctx.Done(); iter.Stop() }()
 
-	slog.InfoContext(ctx, "outbound-stub: ready, subscribed to outbound.>")
+	slog.InfoContext(ctx, "outbound-stub: ready, subscribed to outbound.{x,wa,ig,widget,voice}")
 
 	for {
 		msg, err := iter.Next()
