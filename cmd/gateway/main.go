@@ -289,6 +289,7 @@ func run() error {
 		Onboarding: &onboarding.API{
 			Tenants: onboarding.NewTenantRepo(pool),
 			Agents:  onboarding.NewAgentRepo(pool),
+			Widgets: onboarding.NewWidgetRepo(pool),
 		},
 		DSR: &dsr.API{Repo: dsr.NewRepo(pool)},
 		Widget: &widget.WebsocketHandler{

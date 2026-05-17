@@ -619,6 +619,91 @@
               "path": ["v1", "onboarding", "agents"]
             }
           }
+        },
+        {
+          "name": "List widgets",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/widgets",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "widgets"]
+            },
+            "description": "Returns every widget origin registered to this tenant. The seed inserts one row (http://localhost:8000)."
+          }
+        },
+        {
+          "name": "Register widget",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "  const r = pm.response.json();",
+                  "  pm.environment.set('widget_id', r.id);",
+                  "  pm.environment.set('widget_embed_key', r.embed_key);",
+                  "  console.log('Saved widget_id + embed_key');",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"origin\": \"https://shop.example.co.ke\",\n  \"display_name\": \"Example Shop — main site\",\n  \"welcome_message\": \"Karibu! How can we help?\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/widgets",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "widgets"]
+            },
+            "description": "Origin must be scheme://host with no path/query. Duplicate origin returns 409. Response includes a fresh embed_key for the <script> snippet."
+          }
+        },
+        {
+          "name": "Patch widget (toggle active, edit welcome)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"welcome_message\": \"Updated greeting!\", \"active\": true }"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/widgets/{{widget_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "widgets", "{{widget_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Delete widget",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" }
+            ],
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/widgets/{{widget_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "widgets", "{{widget_id}}"]
+            },
+            "description": "Hard-delete so the brand can re-register the same origin afterwards."
+          }
         }
       ]
     },

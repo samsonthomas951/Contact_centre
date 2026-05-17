@@ -73,6 +73,19 @@ export async function gatewayPost<TIn, TOut>(
   return (await res.json()) as TOut;
 }
 
+// gatewayDelete fires a DELETE and returns nothing on 2xx. Used by the
+// admin pages where the response body has nothing useful to render.
+export async function gatewayDelete(path: string): Promise<void> {
+  const tok = await bearer();
+  const res = await fetch(base() + path, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${tok}` },
+  });
+  if (!res.ok && res.status !== 204) {
+    throw new GatewayError(res.status, `${res.status} ${res.statusText} on ${path}`);
+  }
+}
+
 export class GatewayError extends Error {
   constructor(public status: number, msg: string) {
     super(msg);

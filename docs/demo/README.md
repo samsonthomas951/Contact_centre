@@ -81,6 +81,28 @@ make demo-widget                             # serves web/widget/ on :8000
 Open `http://localhost:8000/demo.html` → click 💬 → type a message.
 Within ~1 second a ticket appears in the agent UI inbox.
 
+### Self-register a new widget site
+
+The seed pre-registers `http://localhost:8000` so the bundled demo
+page works out of the box. To register a brand's real site:
+
+1. Sign in to the agent UI as `carol@demo.local` (admin).
+2. Click **Widgets** in the left nav.
+3. Fill in **Origin** (`https://www.acme.co.ke`), **Display name**,
+   optional **Welcome message** → **Register site**.
+4. The new row appears with a freshly-generated `embed_key`. Click
+   **Show snippet** → **Copy** to grab the `<script>` tag.
+5. Paste it just before `</body>` on the brand site.
+
+The gateway's `/ws/widget` upgrade checks the visitor's `Origin`
+header against the registered list — only origins on the table can
+open a socket, so the snippet can't be stolen and reused on a
+different domain.
+
+Remove a site with the **Remove** button; the embed_key is invalidated
+immediately. Same origin can be re-registered any time (new embed_key
+each time).
+
 ## 4. Wire up Facebook (real DMs)
 
 This is the substantive part. Two pieces need to line up: a Meta

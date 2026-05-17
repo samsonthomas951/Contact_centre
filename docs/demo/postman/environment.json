@@ -71,6 +71,20 @@
       "type": "default",
       "enabled": true,
       "description": "Paste a token from a sent CSAT survey to test the public submit."
+    },
+    {
+      "key": "widget_id",
+      "value": "",
+      "type": "default",
+      "enabled": true,
+      "description": "Filled by 8. Onboarding > Register widget."
+    },
+    {
+      "key": "widget_embed_key",
+      "value": "",
+      "type": "default",
+      "enabled": true,
+      "description": "Embed key returned by Register widget (paste into the <script data-embed-key=\"...\"> snippet)."
     }
   ],
   "_postman_variable_scope": "environment"
