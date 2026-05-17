@@ -104,9 +104,9 @@ func run() error {
 
 	// Channels handled by real per-channel workers must be EXCLUDED
 	// from the stub's filter so JetStream's WorkQueuePolicy doesn't
-	// reject overlapping consumers. Real workers now: fb, ig, wa.
-	// Still on the stub: x (paid API), widget (in-app, no third party
-	// to call), voice (Africa's Talking pending).
+	// reject overlapping consumers. Real workers now: fb, ig, wa,
+	// email. Still on the stub: x (paid API), widget (in-app, no
+	// third party to call), voice (Africa's Talking pending).
 	cons, err := js.CreateOrUpdateConsumer(ctx, "OUTBOUND", jetstream.ConsumerConfig{
 		Durable: "outbound-stub",
 		FilterSubjects: []string{

@@ -264,6 +264,66 @@ frame in ~1.3s (mostly the ingress consumer pull cadence).
 Set `REDIS_ADDR=""` on the gateway to disable (workers + API still
 work, just no auto-refresh — the agent has to manually reload).
 
+## Try email (no Meta needed)
+
+The demo bundles **Mailpit** at <http://localhost:8025> — a local
+SMTP catcher with a web UI showing every outgoing email. The seed
+inserts `support@demo.local` as a mailbox routed to Mailpit, with
+`demo-email-webhook-key` as its inbound HMAC signing key.
+
+### Round-trip in a single shell
+
+```sh
+# 1. Fire an inbound email via the webhook (Python is bundled with
+#    macOS / most Linuxes; pip install nothing required).
+python3 - <<'PY'
+import hmac, hashlib, json, urllib.request, time
+KEY = b"demo-email-webhook-key"
+body = json.dumps({
+  "to":"support@demo.local",
+  "from":"jane.customer@example.com",
+  "from_name":"Jane Customer",
+  "subject":"My order #42 hasn't arrived",
+  "text":"Hello team, where is my parcel?",
+  "message_id":f"<jane-{time.time_ns()}@example.com>",
+  "timestamp": int(time.time()),
+}).encode()
+sig = hmac.new(KEY, body, hashlib.sha256).hexdigest()
+urllib.request.urlopen(urllib.request.Request(
+  "http://localhost:8080/v1/email/webhook",
+  data=body,
+  headers={"Content-Type":"application/json","X-CC-Signature":sig}))
+PY
+# 2. A ticket appears in the agent UI inbox under channel "email".
+# 3. Sign in as ada@demo.local, open the ticket, reply.
+# 4. Open http://localhost:8025 -- the reply is in Mailpit's inbox.
+```
+
+### How the wiring slots in
+
+| Stage | Component |
+|---|---|
+| Inbound (webhook) | `POST /v1/email/webhook` (HMAC-SHA256 verify) → publishes `ingress.email.message` |
+| Inbound (IMAP) | `cmd/email-imap` periodic poller (not in the demo compose — Mailpit doesn't expose IMAP; works against any real IMAP server) |
+| Tenant routing | `email_mailboxes.address` is the lookup key; mailbox row carries tenant_id |
+| Ticket creation | Same `ticket.Consumer` as every other channel; conversation key = customer email |
+| Outbound | `cmd/email-outbound` consumes `outbound.email.text` → `email.Sender.SendText` → SMTP |
+| Threading | Outbound auto-fills `In-Reply-To` + `References` from the most recent inbound's `platform_message_id` |
+| Bounce handling | SMTP 5xx → `outbound_log` row `failed_email`; SMTP 4xx / transport → JetStream Nak (retry) |
+
+### Mailgun (or any HMAC-signing provider)
+
+Two body shapes are accepted at `/v1/email/webhook`:
+
+1. **`multipart/form-data`** with Mailgun's `timestamp` / `token` /
+   `signature` fields. The signing key is the mailbox's
+   `webhook_signing_key` (stored encrypted; rotate via Postman).
+2. **`application/json`** with `X-CC-Signature: <hex-hmac-sha256(body)>`.
+
+Configure your provider's webhook URL as
+`https://<your-tunnel>/v1/email/webhook` and paste the per-mailbox
+signing key into Postman → `8c. Email → Register mailbox`.
+
 ## What outbound looks like now
 
 Four NATS consumers split the `outbound.>` workqueue, three real and
@@ -274,6 +334,7 @@ one stub:
 | `outbound.fb.text` | `fb-outbound` | `PGPageStore` decrypt → POST `graph.facebook.com/<ver>/<page>/messages` → `sent_fb` / `failed_fb` / `no_route` in `outbound_log` |
 | `outbound.ig.text` | `ig-outbound` | `PGTokenStore` decrypt (Path 1 rides the linked Page) → POST `graph.facebook.com/<ver>/<ig_user>/messages` → `sent_ig` / `failed_ig` / `no_route` |
 | `outbound.wa.text` | `wa-outbound` | `PGNumberStore` decrypt → POST `graph.facebook.com/<ver>/<phone_number_id>/messages` (Bearer auth, WA payload) → `sent_wa` / `failed_wa` / `no_route` |
+| `outbound.email.text` | `email-outbound` | `MailboxStore` decrypt → SMTP with STARTTLS → `sent_email` / `failed_email` / `no_route`. Mints fresh Message-ID + threads via In-Reply-To/References. |
 | `outbound.{x,widget,voice}.*` | `outbound-stub` | Writes `agent_reply` to `outbound_log` — placeholder until those senders land |
 
 Until you complete **Connect with Facebook**, all three Meta workers

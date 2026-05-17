@@ -708,6 +708,106 @@
       ]
     },
     {
+      "name": "8c. Email (Carol — admin; webhook public)",
+      "item": [
+        {
+          "name": "List mailboxes",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{carol_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/mailboxes",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "mailboxes"]
+            },
+            "description": "Returns this tenant's mailboxes (secrets stripped). Seed inserts support@demo.local routed to Mailpit."
+          }
+        },
+        {
+          "name": "Register mailbox",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"hello@example.co.ke\",\n  \"display_name\": \"Example Support\",\n  \"smtp_host\": \"smtp.mailgun.org\",\n  \"smtp_port\": 587,\n  \"smtp_username\": \"postmaster@example.co.ke\",\n  \"smtp_password\": \"REPLACE\",\n  \"webhook_signing_key\": \"REPLACE\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/onboarding/mailboxes",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "onboarding", "mailboxes"]
+            },
+            "description": "All secrets are envelope-encrypted at rest. The response includes a webhook_url -- point your Mailgun route at <base_url><webhook_url>."
+          }
+        },
+        {
+          "name": "Inbound webhook (JSON HMAC)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Sign the JSON body with the demo signing key so the gateway accepts it.",
+                  "const CryptoJS = require('crypto-js');",
+                  "const key = pm.environment.get('email_signing_key') || 'demo-email-webhook-key';",
+                  "const ts = Math.floor(Date.now()/1000);",
+                  "const body = JSON.stringify({",
+                  "  to: 'support@demo.local',",
+                  "  from: 'jane.customer@example.com',",
+                  "  from_name: 'Jane Customer',",
+                  "  subject: 'My order #42 hasn\\'t arrived',",
+                  "  text: 'Hello! Where is my parcel?',",
+                  "  message_id: '<jane-' + ts + '@example.com>',",
+                  "  timestamp: ts",
+                  "});",
+                  "const sig = CryptoJS.HmacSHA256(body, key).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({key:'X-CC-Signature', value: sig});",
+                  "pm.request.body.raw = body;"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": { "mode": "raw", "raw": "{}" },
+            "url": {
+              "raw": "{{base_url}}/v1/email/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "email", "webhook"]
+            },
+            "description": "Pre-request script forges a HMAC-signed JSON payload using the demo signing key. The handler verifies, dedupes on Message-ID, publishes ingress.email.message -> a ticket appears."
+          }
+        },
+        {
+          "name": "Inbound webhook — wrong key (expect 401)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-CC-Signature", "value": "00000000" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\"to\":\"support@demo.local\",\"from\":\"x@x\",\"subject\":\"x\",\"text\":\"x\",\"message_id\":\"<x@x>\",\"timestamp\":1700000000}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/email/webhook",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "email", "webhook"]
+            },
+            "description": "Negative test. Bogus X-CC-Signature -> 401."
+          }
+        }
+      ]
+    },
+    {
       "name": "8b. Meta callbacks (public — HMAC-signed)",
       "item": [
         {

@@ -85,6 +85,13 @@
       "type": "default",
       "enabled": true,
       "description": "Embed key returned by Register widget (paste into the <script data-embed-key=\"...\"> snippet)."
+    },
+    {
+      "key": "email_signing_key",
+      "value": "demo-email-webhook-key",
+      "type": "secret",
+      "enabled": true,
+      "description": "HMAC signing key the demo mailbox is seeded with. Pre-request script in '8c. Email > Inbound webhook' signs the body with this."
     }
   ],
   "_postman_variable_scope": "environment"

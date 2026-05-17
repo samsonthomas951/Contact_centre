@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/config"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/logging"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/postgres"
@@ -80,6 +81,9 @@ func run() error {
 		return err
 	}
 	if err := upsertWidgetSite(ctx, tx); err != nil {
+		return err
+	}
+	if err := upsertEmailMailbox(ctx, tx); err != nil {
 		return err
 	}
 
@@ -271,6 +275,50 @@ func upsertWidgetSite(ctx context.Context, tx pgx.Tx) error {
 		      embed_key = EXCLUDED.embed_key,
 		      active = TRUE`,
 		DemoTenantID)
+	return err
+}
+
+// upsertEmailMailbox seeds support@demo.local pointing at the Mailpit
+// container in the demo compose. Outbound SMTP credentials are blank
+// (Mailpit accepts anything); the webhook signing key is a fixed demo
+// value so the Postman + curl smoke tests can produce matching HMAC.
+//
+// Encryption: we encrypt the empty SMTP password and the demo signing
+// key via the same DemoCrypter the gateway uses (derived from
+// FB_DEMO_KEY). Keeping the demo path keyless on Mailpit is OK because
+// the test SMTP listener accepts anonymous SMTP; production wires a
+// real STARTTLS + AUTH server here.
+func upsertEmailMailbox(ctx context.Context, tx pgx.Tx) error {
+	crypter, err := facebook.NewDemoCrypter("demo-only-do-not-use-in-prod")
+	if err != nil {
+		return fmt.Errorf("seed: email crypter: %w", err)
+	}
+	smtpCT, smtpDek, err := crypter.Encrypt(ctx, []byte("")) // no auth
+	if err != nil {
+		return err
+	}
+	hookCT, hookDek, err := crypter.Encrypt(ctx, []byte("demo-email-webhook-key"))
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO email_mailboxes
+		  (tenant_id, address, display_name,
+		   smtp_host, smtp_port, smtp_username, smtp_password_ct, smtp_password_dek_id,
+		   webhook_signing_key_ct, webhook_signing_key_dek_id, active)
+		VALUES ($1, 'support@demo.local', 'Acme Support',
+		        'mailpit', 1025, '', $2, $3,
+		        $4, $5, TRUE)
+		ON CONFLICT (tenant_id, address) DO UPDATE
+		  SET display_name           = EXCLUDED.display_name,
+		      smtp_host              = EXCLUDED.smtp_host,
+		      smtp_port              = EXCLUDED.smtp_port,
+		      smtp_password_ct       = EXCLUDED.smtp_password_ct,
+		      smtp_password_dek_id   = EXCLUDED.smtp_password_dek_id,
+		      webhook_signing_key_ct = EXCLUDED.webhook_signing_key_ct,
+		      webhook_signing_key_dek_id = EXCLUDED.webhook_signing_key_dek_id,
+		      active                 = TRUE`,
+		DemoTenantID, smtpCT, smtpDek, hookCT, hookDek)
 	return err
 }
 

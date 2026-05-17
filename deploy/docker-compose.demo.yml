@@ -246,3 +246,42 @@ services:
       FB_DEMO_KEY:  "demo-only-do-not-use-in-prod"
     networks: [cc]
     restart: unless-stopped
+
+  # Email channel: Mailpit catches every SMTP send for the demo. Web
+  # UI on :8025 shows the captured mail so the agent's reply (sent via
+  # the email-outbound worker) is visible without a real MX. Inbound
+  # uses the /v1/email/webhook endpoint posted from a curl or Postman
+  # request; the cmd/email-imap binary exists for production wiring
+  # against any IMAP4 server (Gmail, FastMail, Migadu, self-hosted
+  # Dovecot) but is intentionally not in this compose -- Mailpit
+  # doesn't expose IMAP.
+  mailpit:
+    image: axllent/mailpit:latest
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY:  "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # web UI
+    networks: [cc]
+    restart: unless-stopped
+
+  email-outbound:
+    build:
+      context: ..
+      dockerfile: build/Dockerfile
+      args:
+        BINARY: email-outbound
+        VERSION: demo
+    depends_on:
+      postgres: { condition: service_healthy }
+      nats:     { condition: service_healthy }
+      mailpit:  { condition: service_started }
+    environment:
+      DATABASE_URL:           "postgres://contactcentre:demo@postgres:5432/contactcentre?sslmode=disable"
+      NATS_URL:               "nats://nats:4222"
+      FB_DEMO_KEY:            "demo-only-do-not-use-in-prod"
+      # Mailpit doesn't advertise STARTTLS; production keeps this false.
+      EMAIL_ALLOW_PLAINTEXT:  "true"
+    networks: [cc]
+    restart: unless-stopped

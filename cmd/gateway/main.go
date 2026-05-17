@@ -38,6 +38,7 @@ import (
 
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/connector/email"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
 	"github.com/samsonthomas951/contact-centre/internal/connector/voice"
@@ -287,6 +288,18 @@ func run() error {
 			slog.String("redirect_uri", fbCfg.RedirectURI))
 	}
 
+	// Email connector: webhook intake (Mailgun or JSON HMAC) + mailbox
+	// store. Always wired -- there's no required external config to
+	// boot it, the per-tenant mailboxes carry the SMTP/IMAP/signing
+	// creds. The crypter is shared with the FB OAuth path so a single
+	// FB_DEMO_KEY rotation rolls every channel's secrets.
+	emailCrypter, err := facebook.NewDemoCrypter(demoKey.Key)
+	if err != nil {
+		return err
+	}
+	emailStore := email.NewMailboxStore(pool, emailCrypter)
+	emailWebhook := &email.WebhookHandler{Store: emailStore, JS: js}
+
 	r := newRouter(routerDeps{
 		Verifier:   verifier,
 		Tickets:    ticketRepo,
@@ -315,6 +328,8 @@ func run() error {
 			JS:       js,
 		},
 		CSATPublic: &csat.PublicAPI{Repo: csat.NewRepo(pool)},
+		Email:      emailWebhook,
+		EmailStore: emailStore,
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -351,14 +366,17 @@ type routerDeps struct {
 	DSR        *dsr.API
 	CSATPublic *csat.PublicAPI
 	Meta       *meta.Handler
+	Email      *email.WebhookHandler
+	EmailStore *email.MailboxStore
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
-		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta
+		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta,
+		d.Email, d.EmailStore
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -440,6 +458,14 @@ func newRouter(d routerDeps) http.Handler {
 		// account; the URL is the confirmation_code we returned.
 		r.Mount("/v1/meta", mh.Routes())
 	}
+	if em != nil {
+		// Email inbound webhook. Public (no bearer) -- the mailbox-
+		// scoped HMAC signing key on the body is what authenticates the
+		// provider. Two body shapes: Mailgun multipart/form-data and
+		// our JSON envelope. Both are documented under "Email" in
+		// docs/demo/postman/collection.json.
+		r.Method(http.MethodPost, "/v1/email/webhook", em)
+	}
 
 	// Authenticated v1 surface.
 	r.Route("/v1", func(r chi.Router) {
@@ -516,9 +542,134 @@ func newRouter(d routerDeps) http.Handler {
 		if ds != nil {
 			r.Mount("/dsr", ds.Routes())
 		}
+		if es != nil {
+			// Email mailbox CRUD lives under /v1/onboarding/mailboxes
+			// (admin-gated, like /widgets). Inline rather than a sub-
+			// package to keep the email connector self-contained.
+			r.Route("/onboarding/mailboxes", func(r chi.Router) {
+				r.Use(auth.RequireRole(auth.RoleAdmin))
+				r.Get("/", mailboxListHandler(es))
+				r.Post("/", mailboxCreateHandler(es))
+				r.Delete("/{id}", mailboxDeleteHandler(es))
+			})
+		}
 	})
 
 	return r
+}
+
+// mailboxListHandler returns the admin's tenant's mailboxes with
+// secrets stripped so a list view can't leak plaintext credentials.
+func mailboxListHandler(es *email.MailboxStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := auth.FromContext(req.Context())
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mbs, err := es.ListByTenant(req.Context(), id.TenantID)
+		if err != nil {
+			slog.ErrorContext(req.Context(), "email: list mailboxes",
+				slog.String("err", err.Error()))
+			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			return
+		}
+		type safe struct {
+			ID                uuid.UUID `json:"id"`
+			Address           string    `json:"address"`
+			DisplayName       string    `json:"display_name"`
+			SMTPHost          string    `json:"smtp_host"`
+			SMTPPort          int       `json:"smtp_port"`
+			SMTPUsername      string    `json:"smtp_username"`
+			IMAPHost          string    `json:"imap_host,omitempty"`
+			IMAPPort          int       `json:"imap_port,omitempty"`
+			IMAPUsername      string    `json:"imap_username,omitempty"`
+			WebhookEnabled    bool      `json:"webhook_enabled"`
+			Active            bool      `json:"active"`
+		}
+		out := make([]safe, len(mbs))
+		for i, m := range mbs {
+			out[i] = safe{
+				ID: m.ID, Address: m.Address, DisplayName: m.DisplayName,
+				SMTPHost: m.SMTPHost, SMTPPort: m.SMTPPort, SMTPUsername: m.SMTPUsername,
+				IMAPHost: m.IMAPHost, IMAPPort: m.IMAPPort, IMAPUsername: m.IMAPUsername,
+				WebhookEnabled: m.WebhookSigningKey != "", Active: m.Active,
+			}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"mailboxes": out})
+	}
+}
+
+func mailboxCreateHandler(es *email.MailboxStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := auth.FromContext(req.Context())
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		var body struct {
+			Address           string `json:"address"`
+			DisplayName       string `json:"display_name"`
+			SMTPHost          string `json:"smtp_host"`
+			SMTPPort          int    `json:"smtp_port"`
+			SMTPUsername      string `json:"smtp_username"`
+			SMTPPassword      string `json:"smtp_password"`
+			IMAPHost          string `json:"imap_host,omitempty"`
+			IMAPPort          int    `json:"imap_port,omitempty"`
+			IMAPUsername      string `json:"imap_username,omitempty"`
+			IMAPPassword      string `json:"imap_password,omitempty"`
+			WebhookSigningKey string `json:"webhook_signing_key,omitempty"`
+		}
+		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
+			http.Error(w, "invalid json", http.StatusBadRequest)
+			return
+		}
+		if body.Address == "" || body.SMTPHost == "" || body.SMTPPort == 0 {
+			http.Error(w, "address, smtp_host, smtp_port required", http.StatusBadRequest)
+			return
+		}
+		mb, err := es.Create(req.Context(), email.CreateParams{
+			TenantID: id.TenantID, Address: body.Address, DisplayName: body.DisplayName,
+			SMTPHost: body.SMTPHost, SMTPPort: body.SMTPPort,
+			SMTPUsername: body.SMTPUsername, SMTPPassword: body.SMTPPassword,
+			IMAPHost: body.IMAPHost, IMAPPort: body.IMAPPort,
+			IMAPUsername: body.IMAPUsername, IMAPPassword: body.IMAPPassword,
+			WebhookSigningKey: body.WebhookSigningKey,
+		})
+		if err != nil {
+			slog.ErrorContext(req.Context(), "email: create mailbox",
+				slog.String("err", err.Error()))
+			http.Error(w, "create failed", http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": mb.ID, "address": mb.Address,
+			"webhook_url": "/v1/email/webhook",
+		})
+	}
+}
+
+func mailboxDeleteHandler(es *email.MailboxStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, req *http.Request) {
+		id, err := auth.FromContext(req.Context())
+		if err != nil {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		mbID, err := uuid.Parse(chi.URLParam(req, "id"))
+		if err != nil {
+			http.Error(w, "invalid id", http.StatusBadRequest)
+			return
+		}
+		if err := es.Delete(req.Context(), id.TenantID, mbID); err != nil {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // publishRealtime emits an Envelope on the supervisor channel for the
