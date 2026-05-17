@@ -34,6 +34,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
@@ -55,7 +56,10 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/pkg/natsx"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/postgres"
 	"github.com/samsonthomas951/contact-centre/internal/pkg/secheaders"
+	"github.com/samsonthomas951/contact-centre/internal/realtime"
 	"github.com/samsonthomas951/contact-centre/internal/ticket"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // version is overridden at build time via -ldflags '-X main.version=...'.
@@ -84,6 +88,11 @@ func run() error {
 		demoKey   = struct {
 			Key string `env:"FB_DEMO_KEY" default:"demo-only-do-not-use-in-prod"`
 		}{}
+		redisCfg = struct {
+			Addr     string `env:"REDIS_ADDR"`
+			Password string `env:"REDIS_PASSWORD"`
+			DB       int    `env:"REDIS_DB" default:"0"`
+		}{}
 	)
 	if err := config.Load("", &httpCfg); err != nil {
 		return err
@@ -103,6 +112,9 @@ func run() error {
 	if err := config.Load("", &demoKey); err != nil {
 		return err
 	}
+	if err := config.Load("", &redisCfg); err != nil {
+		return err
+	}
 
 	ctx := context.Background()
 	pool, err := postgres.Connect(ctx, dbCfg)
@@ -116,6 +128,24 @@ func run() error {
 		return err
 	}
 	defer func() { _ = nc.Drain() }()
+
+	// Realtime hub: publishes ticket-activity envelopes to Redis pub/sub
+	// channels the ws service's sockets are subscribed to. When
+	// REDIS_ADDR is unset (single-process tests, mocked configs) the
+	// hub stays nil and publishRealtime is a no-op.
+	var rtHub *realtime.Hub
+	if redisCfg.Addr != "" {
+		rdb := redis.NewClient(&redis.Options{
+			Addr: redisCfg.Addr, Password: redisCfg.Password, DB: redisCfg.DB,
+		})
+		defer rdb.Close()
+		rtHub = realtime.NewHub(rdb)
+		defer rtHub.Close()
+		slog.InfoContext(ctx, "realtime: hub wired",
+			slog.String("redis_addr", redisCfg.Addr))
+	} else {
+		slog.WarnContext(ctx, "realtime: REDIS_ADDR unset -- inbox auto-refresh disabled")
+	}
 
 	if err := natsx.EnsureStreams(ctx, js); err != nil {
 		return err
@@ -144,6 +174,7 @@ func run() error {
 		// transition doesn't double-emit on retry.
 		_, _ = js.Publish(ctx, "ticket.state_change", ev,
 			jetstream.WithMsgID(ticketID.String()+":"+string(to)))
+		publishRealtime(ctx, rtHub, pool, tenantID, ticketID, "ticket.state_change")
 	}
 
 	// Outbound fan-out: every direction=out message becomes one job
@@ -166,9 +197,19 @@ func run() error {
 		// produce two outbound jobs.
 		_, _ = js.Publish(ctx,
 			fmt.Sprintf("outbound.%s.text", channel), ev)
+		publishRealtime(ctx, rtHub, pool, tenantID, ticketID, "message.new.outbound")
 	}
 
 	ingress := ticket.NewConsumer(js, ticketRepo)
+	// Inbound activity: every successfully-handled connector event
+	// triggers a refresh on the supervisor view + the assigned agent
+	// (when any).
+	ingress.OnHandled = func(ctx context.Context, tenantID, ticketID uuid.UUID) {
+		if ticketID == uuid.Nil {
+			return
+		}
+		publishRealtime(ctx, rtHub, pool, tenantID, ticketID, "message.new.inbound")
+	}
 	go func() {
 		if err := ingress.Run(ctx); err != nil {
 			slog.Error("ticket: ingress consumer exited",
@@ -451,4 +492,52 @@ func newRouter(d routerDeps) http.Handler {
 	})
 
 	return r
+}
+
+// publishRealtime emits an Envelope on the supervisor channel for the
+// tenant and (when the ticket has an assignee) on that agent's
+// channel, so the agent UI's RealtimeRefresher triggers a
+// router.refresh(). Best-effort: any failure logs at WARN; the
+// triggering operation has already committed.
+func publishRealtime(ctx context.Context, hub *realtime.Hub, pool *pgxpool.Pool,
+	tenantID, ticketID uuid.UUID, kind string,
+) {
+	if hub == nil {
+		return
+	}
+	env, err := realtime.New(kind, "", map[string]any{
+		"ticket_id": ticketID.String(),
+		"tenant_id": tenantID.String(),
+	})
+	if err != nil {
+		return
+	}
+	payload, err := env.Marshal()
+	if err != nil {
+		return
+	}
+	// Supervisor channel always; one envelope per tenant per event.
+	if err := hub.Publish(ctx, realtime.SupervisorChannel(tenantID.String()), payload); err != nil {
+		slog.WarnContext(ctx, "realtime: supervisor publish",
+			slog.String("err", err.Error()))
+	}
+	// Look up the assignee so the agent's own inbox refreshes too.
+	// Cheap query; if the ticket is unassigned this returns nil and
+	// we skip the agent-specific publish.
+	var assignedAgent *uuid.UUID
+	if err := pool.QueryRow(ctx, `
+		SELECT assigned_agent_id FROM tickets WHERE id = $1 AND tenant_id = $2`,
+		ticketID, tenantID).Scan(&assignedAgent); err != nil {
+		slog.WarnContext(ctx, "realtime: assignee lookup",
+			slog.String("ticket", ticketID.String()),
+			slog.String("err", err.Error()))
+		return
+	}
+	if assignedAgent == nil {
+		return
+	}
+	if err := hub.Publish(ctx, realtime.AgentChannel(assignedAgent.String()), payload); err != nil {
+		slog.WarnContext(ctx, "realtime: agent publish",
+			slog.String("err", err.Error()))
+	}
 }

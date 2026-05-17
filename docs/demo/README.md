@@ -221,6 +221,27 @@ make demo-down                               # stops + removes containers + volu
 | DM sent but no ticket appears | tunnel rotated since you saved the webhook | re-run `make demo-tunnel`, update Meta's webhook URL |
 | Agent UI shows empty inbox after Facebook DM | role mismatch — Ada has agent role only sees mine=1 | sign in as `bob@demo.local` (supervisor) for full tenant view |
 
+## Realtime inbox refresh
+
+The agent UI subscribes to `/ws/agent` once per session (see
+`web/agent/components/RealtimeRefresher.tsx`) and calls
+`router.refresh()` on every inbound WS frame. The gateway publishes
+those frames when:
+
+| Trigger | Envelope `type` | Channels published to |
+|---|---|---|
+| Inbound message lands (any connector) | `message.new.inbound` | `SupervisorChannel(tenant)` + `AgentChannel(assignee)` if any |
+| Agent reply posted (`POST /v1/tickets/.../messages`) | `message.new.outbound` | `SupervisorChannel` + `AgentChannel` (assignee) |
+| Ticket state changes (`PATCH /v1/tickets/.../state`) | `ticket.state_change` | `SupervisorChannel` + `AgentChannel` (assignee) |
+
+So a regular agent (Ada) only sees activity on tickets assigned to her;
+a supervisor (Bob) sees the whole tenant. Verified end-to-end against
+both bearer roles: state change → frame in ~50ms; inbound NATS event →
+frame in ~1.3s (mostly the ingress consumer pull cadence).
+
+Set `REDIS_ADDR=""` on the gateway to disable (workers + API still
+work, just no auto-refresh — the agent has to manually reload).
+
 ## What outbound looks like now
 
 Four NATS consumers split the `outbound.>` workqueue, three real and

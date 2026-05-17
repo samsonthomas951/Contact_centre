@@ -49,7 +49,16 @@ type IngressEvent struct {
 type Consumer struct {
 	JS   jetstream.JetStream
 	Repo *Repo
+	// OnHandled fires after a successful Handle commit (nil = no-op).
+	// The gateway wires this to a realtime publisher so inbound activity
+	// triggers a router.refresh() in the agent UI.
+	OnHandled HandledListener
 }
+
+// HandledListener is the post-commit hook signature for the ingress
+// Consumer. ticketID is non-zero when a ticket was created or
+// reopened; it's zero for events that bypass ticket state.
+type HandledListener func(ctx context.Context, tenantID, ticketID uuid.UUID)
 
 // NewConsumer constructs the Consumer.
 func NewConsumer(js jetstream.JetStream, r *Repo) *Consumer {
@@ -165,6 +174,9 @@ func (c *Consumer) Handle(ctx context.Context, e IngressEvent) error {
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("ticket: ingress commit: %w", err)
+	}
+	if c.OnHandled != nil {
+		c.OnHandled(ctx, tenantID, ticketID)
 	}
 	return nil
 }

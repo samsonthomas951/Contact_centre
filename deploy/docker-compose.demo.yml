@@ -129,6 +129,12 @@ services:
       MINIO_ACCESS_KEY:            "minioadmin"
       MINIO_SECRET_KEY:            "minioadmin"
       MINIO_BUCKET:                "docs"
+      # Realtime fan-out: when set, the gateway builds a realtime.Hub
+      # and publishes a ticket-activity envelope to Redis whenever an
+      # inbound message, agent reply, or state change lands. The ws
+      # service's WebSocket clients are subscribed to the same channels,
+      # so the agent UI's RealtimeRefresher kicks router.refresh().
+      REDIS_ADDR:                  "redis:6379"
     ports: ["8080:8080"]
     networks: [cc]
     restart: unless-stopped
