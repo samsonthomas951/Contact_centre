@@ -95,12 +95,21 @@ export function RealtimeRefresher({ wsURL }: { wsURL: string }) {
         if (!tabVisible && typeof Notification !== "undefined" &&
             Notification.permission === "granted") {
           try {
+            // Tag per-ticket so three concurrent customer replies
+            // surface as three distinct notifs (one per ticket)
+            // rather than one collapsed banner. Re-pings on the
+            // same ticket still replace prior notifs (correct).
             const n = new Notification("New customer message", {
               body: "Open the inbox to reply.",
-              tag: "contact-centre-inbound", // collapses repeats
+              tag: ticketID ? `cc:ticket:${ticketID}` : "cc:inbox",
             });
-            // Focus the tab when the agent clicks the notification.
             n.onclick = () => {
+              // Click means "I'm dealing with it" — clear the
+              // counter immediately rather than waiting for the
+              // visibilitychange event, which would leave a stale
+              // "(N) Inbox" in the title bar after navigation.
+              unseen.current = 0;
+              applyTitle(baseTitle.current, 0);
               window.focus();
               if (ticketID) router.push(`/tickets/${ticketID}`);
               n.close();

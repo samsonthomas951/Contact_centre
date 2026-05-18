@@ -86,10 +86,14 @@ func run() error {
 	if err := upsertEmailMailbox(ctx, tx); err != nil {
 		return err
 	}
-	if err := upsertCannedReplies(ctx, tx); err != nil {
+	// Tags before canned replies: macros that add_tag reference tag
+	// slugs, and verifyActionTargets (called on Create) needs the
+	// tag to exist. Seed bypasses the repo so order isn't required
+	// for the demo, but the logical dependency is real.
+	if err := upsertTags(ctx, tx); err != nil {
 		return err
 	}
-	if err := upsertTags(ctx, tx); err != nil {
+	if err := upsertCannedReplies(ctx, tx); err != nil {
 		return err
 	}
 

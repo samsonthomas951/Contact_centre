@@ -209,6 +209,41 @@ func run() error {
 		publishRealtime(ctx, rtHub, pool, tenantID, ticketID, "ticket.state_change")
 	}
 
+	// Bulk hook: emit ONE realtime envelope per batch so the
+	// supervisor channel doesn't see N pubs for an N-ticket bulk.
+	// We still emit one ticket.state_change JetStream message per
+	// id (so CSAT + webhook fan-out stay correct) but the WS hub
+	// gets a single "tickets.bulk_state_change" envelope.
+	ticketRepo.OnBulkStateChange = func(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID, to ticket.State) {
+		for _, id := range ids {
+			ev, err := json.Marshal(struct {
+				TicketID uuid.UUID `json:"ticket_id"`
+				TenantID uuid.UUID `json:"tenant_id"`
+				To       string    `json:"to"`
+			}{id, tenantID, string(to)})
+			if err != nil {
+				continue
+			}
+			_, _ = js.Publish(ctx, "ticket.state_change", ev,
+				jetstream.WithMsgID(id.String()+":"+string(to)))
+		}
+		// Single batched realtime envelope. The agent UIs already
+		// router.refresh() on any inbound frame, so one is enough.
+		if rtHub != nil {
+			env, err := realtime.New("tickets.bulk_state_change", "", map[string]any{
+				"tenant_id":  tenantID.String(),
+				"to":         string(to),
+				"count":      len(ids),
+				"ticket_ids": ids,
+			})
+			if err == nil {
+				if payload, e := env.Marshal(); e == nil {
+					_ = rtHub.Publish(ctx, realtime.SupervisorChannel(tenantID.String()), payload)
+				}
+			}
+		}
+	}
+
 	// Outbound fan-out: every direction=out message becomes one job
 	// on outbound.<channel>.text. The per-channel sender (production:
 	// facebook.Sender etc.; demo: outbound-stub binary) ships it.

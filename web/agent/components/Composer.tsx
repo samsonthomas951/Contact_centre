@@ -9,6 +9,7 @@ import {
   type UploadedDoc,
   type CannedReply,
   type CannedReplyAction,
+  type MacroResult,
 } from "@/app/(app)/tickets/[id]/actions";
 
 // Client component for the reply box. The actual POST is a server
@@ -54,9 +55,20 @@ export function Composer({
   // Pending macro: when the inserted reply carries actions, they fire
   // after the message send succeeds. Cleared after each submit.
   const pendingActions = useRef<CannedReplyAction[]>([]);
+  // Transient toast for macro outcomes ("macro: 2 ran, 1 failed").
+  // Cleared after 4s so the agent has time to notice partial fails
+  // without it lingering.
+  const [macroToast, setMacroToast] = useState<{ msg: string; bad: boolean } | null>(null);
+  const macroTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
+
+  const showMacroToast = (msg: string, bad: boolean) => {
+    setMacroToast({ msg, bad });
+    if (macroTimer.current) clearTimeout(macroTimer.current);
+    macroTimer.current = setTimeout(() => setMacroToast(null), 4000);
+  };
 
   // Slash-picker state. pickerQuery is the partial shortcut after
   // "/"; pickerIndex is the highlighted row; triggerStart is the
@@ -140,11 +152,30 @@ export function Composer({
         });
         // Macro side-effects fire after the message lands. We do
         // not refresh between them -- the final revalidatePath
-        // inside runMacroActions handles it.
+        // inside runMacroActions handles it. Toast surfaces any
+        // step failures so the agent isn't left guessing whether
+        // the macro actually ran.
+        let macroResult: MacroResult | null = null;
         if (actions.length > 0) {
-          await runMacroActions(ticketId, actions, meId);
+          macroResult = await runMacroActions(ticketId, actions, meId);
         }
         router.refresh();
+        if (macroResult) {
+          if (macroResult.failed.length === 0) {
+            showMacroToast(
+              `macro: ${macroResult.ran} step${macroResult.ran === 1 ? "" : "s"} ran`,
+              false,
+            );
+          } else {
+            const reasons = macroResult.failed
+              .map((f) => `${f.type}: ${f.reason}`)
+              .join("; ");
+            showMacroToast(
+              `macro: ${macroResult.ran} ran, ${macroResult.failed.length} failed — ${reasons}`,
+              true,
+            );
+          }
+        }
       } catch (e) {
         setBody(trimmed); // restore so the agent can retry
         // eslint-disable-next-line no-console
@@ -201,8 +232,21 @@ export function Composer({
         submit();
       }}
     >
-      <div className="mb-2 flex gap-2 text-xs">
+      <div className="mb-2 flex items-center gap-2 text-xs">
         <DirectionToggle value={direction} onChange={setDirection} />
+        {macroToast && (
+          <span
+            className={
+              "ml-auto truncate rounded px-2 py-0.5 text-[11px] " +
+              (macroToast.bad
+                ? "bg-red-100 text-red-800"
+                : "bg-emerald-100 text-emerald-800")
+            }
+            title={macroToast.msg}
+          >
+            {macroToast.msg}
+          </span>
+        )}
       </div>
 
       {attachments.length > 0 && (

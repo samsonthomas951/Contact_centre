@@ -32,6 +32,21 @@ export function MobileNav({ children }: { children: React.ReactNode }) {
     }
   }, [open]);
 
+  // Esc closes the drawer so keyboard users can dismiss without
+  // tabbing to the close button. Only armed while open to avoid
+  // stealing Esc from other components.
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setOpen(false);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
     <>
       <button

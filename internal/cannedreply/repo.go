@@ -91,6 +91,9 @@ func (r *Repo) Create(ctx context.Context, p CreateParams) (*Reply, error) {
 	if err := validateActions(p.Actions); err != nil {
 		return nil, err
 	}
+	if err := r.verifyActionTargets(ctx, p.TenantID, p.Actions); err != nil {
+		return nil, err
+	}
 	actionsJSON, err := marshalActions(p.Actions)
 	if err != nil {
 		return nil, err
@@ -200,6 +203,9 @@ func (r *Repo) Update(ctx context.Context, p UpdateParams) (*Reply, error) {
 		if err := validateActions(*p.Actions); err != nil {
 			return nil, err
 		}
+		if err := r.verifyActionTargets(ctx, p.TenantID, *p.Actions); err != nil {
+			return nil, err
+		}
 		actionsToWrite = *p.Actions
 	} else {
 		actionsToWrite = cur.Actions
@@ -274,6 +280,54 @@ func validateShortcut(s string) error {
 		return fmt.Errorf(
 			"%w: shortcut must be lower_snake_case, 1-32 chars, starting with a letter",
 			ErrInvalid)
+	}
+	return nil
+}
+
+// verifyActionTargets is the tenant-scoped half of action
+// validation. Unlike validateActions (pure shape), this hits the DB:
+//
+//	add_tag    the tag_slug must exist in the tenant catalogue
+//	assign     when `to` is a UUID, that agent must belong to the
+//	           tenant (literals "me" / "unassign" are runtime-
+//	           resolved by the composer and need no DB check)
+//
+// Without these checks an admin could persist a macro that points
+// at a foreign tenant's tag or agent; execution would silently
+// no-op, leaving the macro author with no signal that their recipe
+// is broken.
+func (r *Repo) verifyActionTargets(ctx context.Context, tenantID uuid.UUID, actions []Action) error {
+	for i, a := range actions {
+		switch a.Type {
+		case "add_tag":
+			var ok bool
+			if err := r.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM tags WHERE tenant_id = $1 AND slug = $2)`,
+				tenantID, a.TagSlug).Scan(&ok); err != nil {
+				return fmt.Errorf("cannedreply: tag lookup: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("%w: action[%d] tag %q not found", ErrInvalid, i, a.TagSlug)
+			}
+		case "assign":
+			if a.To == "me" || a.To == "unassign" {
+				continue
+			}
+			agentID, err := uuid.Parse(a.To)
+			if err != nil {
+				// validateActions already rejected; defensive.
+				return fmt.Errorf("%w: action[%d] assign.to invalid", ErrInvalid, i)
+			}
+			var ok bool
+			if err := r.Pool.QueryRow(ctx,
+				`SELECT EXISTS(SELECT 1 FROM agents WHERE tenant_id = $1 AND id = $2 AND active)`,
+				tenantID, agentID).Scan(&ok); err != nil {
+				return fmt.Errorf("cannedreply: agent lookup: %w", err)
+			}
+			if !ok {
+				return fmt.Errorf("%w: action[%d] assign target not in tenant", ErrInvalid, i)
+			}
+		}
 	}
 	return nil
 }

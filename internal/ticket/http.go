@@ -312,33 +312,47 @@ func (a *API) bulk(w http.ResponseWriter, r *http.Request) {
 
 	case "assign":
 		// Reassigning others' work is a supervisor/admin act; agents
-		// can self-assign (gateway-side simplification: if agent_id
-		// equals caller, any role can do it; otherwise require
-		// elevated role).
+		// can self-assign — but only over tickets that are
+		// unassigned or already theirs. Without that scope a plain
+		// agent could lift the entire queue off a teammate by
+		// self-assigning a list of their ids.
 		if body.AgentID == nil || *body.AgentID == uuid.Nil {
 			writeErr(w, http.StatusBadRequest, "agent_id required for assign")
 			return
 		}
-		if *body.AgentID != id.AgentID &&
-			!id.HasRole(auth.RoleSupervisor, auth.RoleAdmin) {
+		privileged := id.HasRole(auth.RoleSupervisor, auth.RoleAdmin)
+		if *body.AgentID != id.AgentID && !privileged {
 			writeErr(w, http.StatusForbidden,
 				"only supervisor/admin can assign to other agents")
 			return
 		}
-		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, body.AgentID, body.TicketIDs)
+		// callerLimit is nil for privileged roles (no scope), or the
+		// caller's own id for plain agents — the repo translates
+		// that into "WHERE assigned_agent_id IS NULL OR = caller".
+		var callerLimit *uuid.UUID
+		if !privileged {
+			c := id.AgentID
+			callerLimit = &c
+		}
+		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, body.AgentID, body.TicketIDs, callerLimit)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "ticket: bulk assign", slog.String("err", err.Error()))
 			writeErr(w, http.StatusInternalServerError, "bulk failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failures": []BulkFailure{}})
+		// Surface skipped count so the agent sees partial success
+		// when some ids fell outside their callerLimit.
+		skipped := len(body.TicketIDs) - updated
+		writeJSON(w, http.StatusOK, map[string]any{
+			"updated": updated, "skipped": skipped, "failures": []BulkFailure{},
+		})
 
 	case "unassign":
 		if !id.HasRole(auth.RoleSupervisor, auth.RoleAdmin) {
 			writeErr(w, http.StatusForbidden, "only supervisor/admin can unassign")
 			return
 		}
-		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, nil, body.TicketIDs)
+		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, nil, body.TicketIDs, nil)
 		if err != nil {
 			slog.ErrorContext(r.Context(), "ticket: bulk unassign", slog.String("err", err.Error()))
 			writeErr(w, http.StatusInternalServerError, "bulk failed")

@@ -21,19 +21,46 @@ export async function sendMessage(
   return m;
 }
 
-// runMacroActions executes a macro's post-send side-effects. Each
-// step calls the appropriate gateway endpoint. Errors per-step are
-// swallowed so a bad add_tag (e.g. tag missing) doesn't prevent the
-// set_state that follows; the macro author can fix the definition.
+// MacroResult tells the Composer which steps landed and which
+// fell over so the agent gets a useful toast instead of silent
+// success. Steps run sequentially because order matters
+// (set_state -> add_tag would tag a resolved ticket, which is
+// usually fine, but the macro author writes the recipe top-down).
+export interface MacroResult {
+  ran: number;
+  failed: { step: number; type: string; reason: string }[];
+}
+
+// runMacroActions executes a macro's post-send side-effects. The
+// tag_slug -> tag_id resolution happens ONCE per call (cached for
+// the whole batch of steps) rather than per add_tag.
 //
 // `meId` is the calling agent's UUID, used to resolve `assign: "me"`.
 export async function runMacroActions(
   ticketId: string,
   actions: CannedReplyAction[],
   meId: string,
-): Promise<void> {
-  const { gatewayPost } = await import("@/lib/api");
-  for (const step of actions) {
+): Promise<MacroResult> {
+  const api = await import("@/lib/api");
+  const result: MacroResult = { ran: 0, failed: [] };
+
+  // Resolve tag catalogue once if any add_tag step exists. Cuts
+  // N round-trips for an N-add-tag macro to one.
+  let tagsBySlug: Map<string, string> | null = null;
+  const needsTags = actions.some((a) => a.type === "add_tag" && a.tag_slug);
+  if (needsTags) {
+    try {
+      const list = await api.gatewayJSON<{
+        tags: { id: string; slug: string }[];
+      }>("/v1/tags/", { cache: "no-store" });
+      tagsBySlug = new Map((list.tags ?? []).map((t) => [t.slug, t.id]));
+    } catch {
+      tagsBySlug = new Map(); // empty -> all add_tag steps fail with "tag not found"
+    }
+  }
+
+  for (let i = 0; i < actions.length; i++) {
+    const step = actions[i];
     try {
       if (step.type === "set_state" && step.to) {
         await gatewayPatch<{ to: string }, unknown>(
@@ -41,20 +68,14 @@ export async function runMacroActions(
           { to: step.to },
         );
       } else if (step.type === "add_tag" && step.tag_slug) {
-        // The macro stores tag_slug for portability; resolve to
-        // tag_id via the /tags listing. Cheap (1 cached fetch per
-        // macro run); avoids embedding tenant-local UUIDs in seed
-        // data.
-        const list = await (await import("@/lib/api")).gatewayJSON<{
-          tags: { id: string; slug: string }[];
-        }>("/v1/tags/", { cache: "no-store" });
-        const tag = list.tags?.find((t) => t.slug === step.tag_slug);
-        if (tag) {
-          await gatewayPost<{ tag_id: string }, void>(
-            `/v1/tickets/${ticketId}/tags/`,
-            { tag_id: tag.id },
-          );
+        const tagId = tagsBySlug?.get(step.tag_slug);
+        if (!tagId) {
+          throw new Error(`tag "${step.tag_slug}" not found`);
         }
+        await gatewayPost<{ tag_id: string }, void>(
+          `/v1/tickets/${ticketId}/tags/`,
+          { tag_id: tagId },
+        );
       } else if (step.type === "assign" && step.to) {
         const agentID =
           step.to === "me"
@@ -70,13 +91,30 @@ export async function runMacroActions(
           ticket_ids: [ticketId],
           ...(agentID ? { agent_id: agentID } : {}),
         });
+      } else {
+        // Unknown action type: not an error per se -- forwards
+        // compatibility -- but worth surfacing so the author can
+        // upgrade the client.
+        result.failed.push({
+          step: i,
+          type: step.type,
+          reason: "unknown action type",
+        });
+        continue;
       }
-    } catch {
-      // Skip and continue -- the macro author can repair the recipe.
+      result.ran++;
+    } catch (e) {
+      result.failed.push({
+        step: i,
+        type: step.type,
+        reason: e instanceof Error ? e.message : "step failed",
+      });
+      // Keep going: a missing tag shouldn't block a state change.
     }
   }
   revalidatePath(`/tickets/${ticketId}`);
   revalidatePath("/inbox");
+  return result;
 }
 
 // changeState moves the ticket to a new state. The gateway enforces

@@ -31,6 +31,11 @@ type Repo struct {
 	// `ticket.state_change` so subscribers (CSAT dispatcher, webhook
 	// fan-out, audit) react.
 	OnStateChange StateChangeListener
+	// OnBulkStateChange is fired once after a bulk batch lands so
+	// the realtime hub gets one envelope per batch instead of N.
+	// Receives the set of ticket ids that actually transitioned.
+	// nil is a no-op (same convention as OnStateChange).
+	OnBulkStateChange BulkStateChangeListener
 	// OnOutbound is fired after AppendMessage commits an outbound
 	// (direction=out) message. nil is a no-op. The gateway wires it
 	// to a JetStream publisher on outbound.<channel>.text so per-
@@ -40,6 +45,11 @@ type Repo struct {
 
 // StateChangeListener is the post-commit hook signature.
 type StateChangeListener func(ctx context.Context, tenantID, ticketID uuid.UUID, from, to State)
+
+// BulkStateChangeListener fires once per successful bulk batch. The
+// `to` argument is the target state every id in `ids` landed on
+// (BulkState applies one transition across the whole batch).
+type BulkStateChangeListener func(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID, to State)
 
 // OutboundListener fires after a `direction=out` message is persisted.
 // channel is the conversation's channel ('fb', 'x', 'wa', ...).
