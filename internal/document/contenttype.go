@@ -11,16 +11,31 @@ package document
 
 import (
 	"errors"
+	"mime"
 	"net/http"
 	"slices"
 )
 
 // AllowedContentTypes lists every content-type the service accepts.
-// Phase 1 covers PDF + Word; future phases will add images and CSV.
+// Customer-support attachments cluster around screenshots (PNG/JPG),
+// PDFs, Word docs, plain text, and CSVs. Anything else needs an
+// explicit add here -- the deny-by-default posture is intentional.
+//
+// We list both `text/plain; charset=utf-8` and the parameter-less
+// `text/plain` because http.DetectContentType usually returns the
+// charset-qualified form but some inputs hit the bare one.
 var AllowedContentTypes = []string{
 	"application/pdf",
 	"application/msword",
 	"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+	"text/plain",
+	"text/plain; charset=utf-8",
+	"text/csv",
+	"text/csv; charset=utf-8",
 }
 
 // ErrContentTypeNotAllowed is returned by Sniff when the detected type
@@ -57,8 +72,23 @@ func Sniff(head []byte, claim string) (string, error) {
 	if !slices.Contains(AllowedContentTypes, detected) {
 		return detected, ErrContentTypeNotAllowed
 	}
-	if claim != "" && claim != detected {
+	// Compare claim against detected on the bare media-type only;
+	// charset / boundary parameters drift between browsers, CLIs and
+	// stdlib's detector, and equality there isn't load-bearing for
+	// security -- the magic-byte sniff already pinned the format.
+	if claim != "" && !mediaTypeMatches(claim, detected) {
 		return detected, ErrContentTypeMismatch
 	}
 	return detected, nil
+}
+
+// mediaTypeMatches strips ;charset=...; etc. and compares the
+// type/subtype only. Unparseable inputs fall back to exact equality.
+func mediaTypeMatches(claim, detected string) bool {
+	c, _, cerr := mime.ParseMediaType(claim)
+	d, _, derr := mime.ParseMediaType(detected)
+	if cerr != nil || derr != nil {
+		return claim == detected
+	}
+	return c == d
 }

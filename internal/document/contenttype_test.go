@@ -53,10 +53,14 @@ func TestSniff_Rejects(t *testing.T) {
 	}{
 		{"empty body", nil, "application/pdf", errors.New("document: empty body")},
 		{
+			// PNG bytes claiming to be a PDF -- the detector returns
+			// image/png (now allow-listed); the claim mismatch is the
+			// rejection reason. (Before image/png was allow-listed
+			// this surfaced as NotAllowed; now Mismatch wins.)
 			"png pretending to be pdf",
 			[]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'},
 			"application/pdf",
-			ErrContentTypeNotAllowed,
+			ErrContentTypeMismatch,
 		},
 		{
 			"pdf with mismatched docx claim",

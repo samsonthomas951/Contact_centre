@@ -73,6 +73,22 @@ export async function gatewayPost<TIn, TOut>(
   return (await res.json()) as TOut;
 }
 
+// gatewayUpload posts a multipart/form-data request and returns the
+// JSON body. Used by the composer's attachment flow -- the file part
+// must be added to the FormData by the caller.
+export async function gatewayUpload<T>(path: string, form: FormData): Promise<T> {
+  const tok = await bearer();
+  const res = await fetch(base() + path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${tok}` },
+    body: form,
+  });
+  if (!res.ok) {
+    throw new GatewayError(res.status, `${res.status} ${res.statusText} on ${path}`);
+  }
+  return (await res.json()) as T;
+}
+
 // gatewayDelete fires a DELETE and returns nothing on 2xx. Used by the
 // admin pages where the response body has nothing useful to render.
 export async function gatewayDelete(path: string): Promise<void> {

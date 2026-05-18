@@ -1,28 +1,42 @@
 "use server";
 
-import { gatewayPost } from "@/lib/api";
+import { gatewayPost, gatewayUpload } from "@/lib/api";
 import { revalidatePath } from "next/cache";
 import type { Message } from "@/lib/types";
 
 // sendMessage is the server action the composer calls. The bearer
-// token rides through gatewayPost (server-only); the client component
-// never sees it. Per server-auth-actions: server actions are
-// authenticated via the same NextAuth session every other server-side
-// fetch uses, so the action inherits the page's auth without
-// re-checking.
+// token rides through gatewayPost (server-only); the client never
+// sees it. `attachments` is a list of document UUIDs returned by
+// prior uploadAttachment calls -- the message handler stores them on
+// messages.attachments so the thread can render download links.
 export async function sendMessage(
   ticketId: string,
-  input: { direction: "out" | "note"; body: string },
+  input: { direction: "out" | "note"; body: string; attachments?: string[] },
 ): Promise<Message> {
-  // gatewayPost throws on non-2xx; the composer catches and surfaces
-  // the error as a console.error + body restore.
   const m = await gatewayPost<typeof input, Message>(
     `/v1/tickets/${ticketId}/messages`,
-    input,
+    { ...input, attachments: input.attachments ?? [] },
   );
-  // Invalidate the cache so the next router.refresh() pulls the
-  // freshly-appended message from the gateway. We do this even though
-  // the page is dynamic; revalidatePath makes the contract explicit.
   revalidatePath(`/tickets/${ticketId}`);
   return m;
+}
+
+// UploadedDoc is the minimum the composer needs to render a chip
+// with filename + size and later resolve a download URL.
+export interface UploadedDoc {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+}
+
+// uploadAttachment streams one file to /v1/documents and returns the
+// minted Document. Ticket linkage is enforced server-side so the
+// audit ledger ties the upload to this conversation.
+export async function uploadAttachment(
+  ticketId: string,
+  form: FormData,
+): Promise<UploadedDoc> {
+  form.set("ticket_id", ticketId);
+  return gatewayUpload<UploadedDoc>("/v1/documents", form);
 }

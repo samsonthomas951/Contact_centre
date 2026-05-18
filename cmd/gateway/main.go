@@ -102,6 +102,11 @@ func run() error {
 		publicCfg = struct {
 			URL string `env:"PUBLIC_BASE_URL" default:"http://localhost:8080"`
 		}{}
+		minioCfg  document.MinioConfig
+		clamavCfg = struct {
+			Addr string `env:"CLAMAV_ADDR" default:"clamav:3310"`
+			DEK  string `env:"DOCUMENT_DEK_ID" default:"demo-dek"`
+		}{}
 	)
 	if err := config.Load("", &httpCfg); err != nil {
 		return err
@@ -126,6 +131,18 @@ func run() error {
 	}
 	if err := config.Load("", &publicCfg); err != nil {
 		return err
+	}
+	// MinIO + ClamAV are optional -- gateway boots without them and
+	// /v1/documents stays unmounted. The compose stack always wires
+	// them so the upload + scan path is live in the demo.
+	docsEnabled := os.Getenv("MINIO_ENDPOINT") != ""
+	if docsEnabled {
+		if err := config.Load("", &minioCfg); err != nil {
+			return err
+		}
+		if err := config.Load("", &clamavCfg); err != nil {
+			return err
+		}
 	}
 
 	ctx := context.Background()
@@ -300,6 +317,28 @@ func run() error {
 	emailStore := email.NewMailboxStore(pool, emailCrypter)
 	emailWebhook := &email.WebhookHandler{Store: emailStore, JS: js}
 
+	// Document service: MinIO + ClamAV stream-scanning, plus a
+	// presigned-URL download path. Skipped when MINIO_ENDPOINT is
+	// unset (unit tests, headless deployments).
+	var docsAPI *document.API
+	if docsEnabled {
+		store, err := document.NewObjectStore(ctx, minioCfg)
+		if err != nil {
+			return fmt.Errorf("document: object store: %w", err)
+		}
+		scanner := &document.ClamAVScanner{
+			Addr: clamavCfg.Addr, DialTimeout: 5 * time.Second, OperationTimeout: 60 * time.Second,
+		}
+		docsAPI = &document.API{
+			Svc: &document.Service{
+				Pool: pool, Store: store, Scanner: scanner, DEKID: clamavCfg.DEK,
+			},
+		}
+		slog.Info("documents: wired",
+			slog.String("minio_endpoint", minioCfg.Endpoint),
+			slog.String("clamav_addr", clamavCfg.Addr))
+	}
+
 	r := newRouter(routerDeps{
 		Verifier:   verifier,
 		Tickets:    ticketRepo,
@@ -330,6 +369,7 @@ func run() error {
 		CSATPublic: &csat.PublicAPI{Repo: csat.NewRepo(pool)},
 		Email:      emailWebhook,
 		EmailStore: emailStore,
+		Docs:       docsAPI,
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
