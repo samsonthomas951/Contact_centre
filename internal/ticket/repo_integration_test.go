@@ -37,7 +37,10 @@ func freshPool(t *testing.T) *pgxpool.Pool {
 	}
 	_, file, _, _ := runtime.Caller(0)
 	root := filepath.Join(filepath.Dir(file), "..", "..", "migrations")
-	for _, name := range []string{"0001_init", "0002_agents", "0003_customers", "0004_tickets"} {
+	// 0020_tags is in the list because Repo.List joins ticket_tags
+	// in its tag-rollup CTE; without the table the integration tests
+	// would all fail with "relation ticket_tags does not exist".
+	for _, name := range []string{"0001_init", "0002_agents", "0003_customers", "0004_tickets", "0020_tags"} {
 		b, err := os.ReadFile(filepath.Join(root, name+".up.sql"))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
