@@ -44,6 +44,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/connector/voice"
 	"github.com/samsonthomas951/contact-centre/internal/connector/whatsapp"
 	"github.com/samsonthomas951/contact-centre/internal/connector/widget"
+	"github.com/samsonthomas951/contact-centre/internal/customer"
 	xconn "github.com/samsonthomas951/contact-centre/internal/connector/x"
 	"github.com/samsonthomas951/contact-centre/internal/csat"
 	"github.com/samsonthomas951/contact-centre/internal/document"
@@ -370,6 +371,7 @@ func run() error {
 		Email:      emailWebhook,
 		EmailStore: emailStore,
 		Docs:       docsAPI,
+		Customer:   &customer.API{Repo: customer.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -408,15 +410,16 @@ type routerDeps struct {
 	Meta       *meta.Handler
 	Email      *email.WebhookHandler
 	EmailStore *email.MailboxStore
+	Customer   *customer.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
 		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta,
-		d.Email, d.EmailStore
+		d.Email, d.EmailStore, d.Customer
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -581,6 +584,9 @@ func newRouter(d routerDeps) http.Handler {
 		}
 		if ds != nil {
 			r.Mount("/dsr", ds.Routes())
+		}
+		if cust != nil {
+			r.Mount("/customers", cust.Routes())
 		}
 		if es != nil {
 			// Email mailbox CRUD lives under /v1/onboarding/mailboxes

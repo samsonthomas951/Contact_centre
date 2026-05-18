@@ -5,6 +5,7 @@ import type { Ticket, Message } from "@/lib/types";
 import { Composer } from "@/components/Composer";
 import { MessageThread } from "@/components/MessageThread";
 import { TicketHeader } from "@/components/TicketHeader";
+import { CustomerSidebar } from "@/components/CustomerSidebar";
 
 export const dynamic = "force-dynamic";
 
@@ -48,15 +49,34 @@ export default async function TicketPage({
   const ticket = await ticketPromise;
 
   return (
-    <div className="flex h-screen flex-col bg-white">
-      <TicketHeader ticket={ticket} />
-      <div className="flex-1 overflow-auto px-6 py-4">
-        <Suspense fallback={<MessageSkeleton />}>
-          <MessageThreadAsync messagesPromise={messagesPromise} />
-        </Suspense>
+    <div className="flex h-screen">
+      {/* Thread + composer column */}
+      <div className="flex flex-1 flex-col bg-white">
+        <TicketHeader ticket={ticket} />
+        <div className="flex-1 overflow-auto px-6 py-4">
+          <Suspense fallback={<MessageSkeleton />}>
+            <MessageThreadAsync messagesPromise={messagesPromise} />
+          </Suspense>
+        </div>
+        <Composer ticketId={id} />
       </div>
-      <Composer ticketId={id} />
+      {/* Customer profile column. Suspended so a slow customer fetch
+          doesn't delay the thread paint. */}
+      <Suspense fallback={<SidebarSkeleton />}>
+        <CustomerSidebar ticketId={id} />
+      </Suspense>
     </div>
+  );
+}
+
+function SidebarSkeleton() {
+  return (
+    <aside className="w-72 shrink-0 border-l border-slate-200 bg-slate-50 p-4">
+      <div className="h-4 w-32 animate-pulse rounded bg-slate-200" />
+      <div className="mt-2 h-3 w-40 animate-pulse rounded bg-slate-200" />
+      <div className="mt-6 h-3 w-20 animate-pulse rounded bg-slate-200" />
+      <div className="mt-2 h-8 w-full animate-pulse rounded bg-slate-200" />
+    </aside>
   );
 }
 
