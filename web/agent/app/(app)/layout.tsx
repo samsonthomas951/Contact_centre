@@ -26,6 +26,7 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           <NavLink href="/channels">Channels</NavLink>
           <NavLink href="/widgets">Widgets</NavLink>
           <NavLink href="/canned-replies">Saved replies</NavLink>
+          <NavLink href="/tags">Tags</NavLink>
         </nav>
         <form
           action={async () => {

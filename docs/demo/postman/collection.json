@@ -805,6 +805,125 @@
       ]
     },
     {
+      "name": "8e. Tags (any role lists; admin manages)",
+      "item": [
+        {
+          "name": "List tags (Ada)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ada_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/tags/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tags", ""]
+            },
+            "description": "Seed inserts billing / refund / urgent / vip. Visible to every authed role on the tenant."
+          }
+        },
+        {
+          "name": "Create tag (Carol — admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"complaint\",\n  \"name\": \"Complaint\",\n  \"color\": \"a855f7\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tags/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tags", ""]
+            },
+            "description": "Admin-only. Slug must be lower_snake_case; color is 6-char RGB hex without '#'."
+          }
+        },
+        {
+          "name": "Ada tries to create — expect 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"forbidden\",\n  \"name\": \"x\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tags/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tags", ""]
+            },
+            "description": "Negative test. Agents and supervisors cannot create tags; only admin."
+          }
+        },
+        {
+          "name": "Attach tag to ticket (Ada)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"tag_id\": \"{{tag_billing_id}}\" }"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/tags/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "tags", ""]
+            },
+            "description": "Set tag_billing_id (returned by List tags) + ticket_id manually. Idempotent: re-running returns 204 without duplicating."
+          }
+        },
+        {
+          "name": "List tags on ticket",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ada_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/tags/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "tags", ""]
+            }
+          }
+        },
+        {
+          "name": "Detach tag from ticket",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ada_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/{{ticket_id}}/tags/{{tag_billing_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "{{ticket_id}}", "tags", "{{tag_billing_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Filter inbox by tag (?tag=urgent)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ada_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/tickets?tag=urgent&assigned=all",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets"],
+              "query": [
+                { "key": "tag", "value": "urgent" },
+                { "key": "assigned", "value": "all" }
+              ]
+            },
+            "description": "Returns only tickets carrying the urgent tag. Combine ?tag=billing&tag=urgent for OR semantics."
+          }
+        }
+      ]
+    },
+    {
       "name": "8c. Email (Carol — admin; webhook public)",
       "item": [
         {

@@ -101,6 +101,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		AssignedFilter: q.Get("assigned"), // "", "mine", "unassigned", "all"
 		Query:          q.Get("q"),
 		Channels:       q["channel"],      // ?channel=fb&channel=email
+		TagSlugs:       q["tag"],          // ?tag=billing&tag=urgent
 	}
 	// Always carry the caller's agent id so AssignedFilter=mine can use
 	// it without an extra round-trip from the handler.

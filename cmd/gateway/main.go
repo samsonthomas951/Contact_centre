@@ -39,6 +39,7 @@ import (
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
 	"github.com/samsonthomas951/contact-centre/internal/cannedreply"
+	tagpkg "github.com/samsonthomas951/contact-centre/internal/tag"
 	"github.com/samsonthomas951/contact-centre/internal/connector/email"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
@@ -374,6 +375,7 @@ func run() error {
 		Docs:         docsAPI,
 		Customer:     &customer.API{Repo: customer.NewRepo(pool)},
 		CannedReply:  &cannedreply.API{Repo: cannedreply.NewRepo(pool)},
+		Tag:          &tagpkg.API{Repo: tagpkg.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -414,15 +416,16 @@ type routerDeps struct {
 	EmailStore  *email.MailboxStore
 	Customer    *customer.API
 	CannedReply *cannedreply.API
+	Tag         *tagpkg.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust, cr :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust, cr, tg :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
 		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta,
-		d.Email, d.EmailStore, d.Customer, d.CannedReply
+		d.Email, d.EmailStore, d.Customer, d.CannedReply, d.Tag
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -518,6 +521,12 @@ func newRouter(d routerDeps) http.Handler {
 		r.Use(auth.Middleware(v))
 		r.Get("/me", auth.MeHandler)
 		r.Mount("/tickets", (&ticket.API{Repo: tr}).Routes())
+		if tg != nil {
+			r.Mount("/tags", tg.Routes())
+			// Per-ticket attach/detach lives next to the ticket so the
+			// URL reads naturally: /v1/tickets/{id}/tags.
+			r.Mount("/tickets/{id}/tags", tg.TicketRoutes())
+		}
 		// Connected-Pages list lives behind auth (each tenant sees
 		// only its own). The OAuth start/callback are public because
 		// Meta drives the redirect, but reading the list isn't.

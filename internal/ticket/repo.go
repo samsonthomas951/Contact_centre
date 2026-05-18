@@ -2,6 +2,7 @@ package ticket
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -118,6 +119,11 @@ type ListParams struct {
 	// Query case-insensitive substring match against messages.body for
 	// any message on the ticket. Empty = no text filter.
 	Query string
+	// TagSlugs restricts to tickets that have at least one of these
+	// tag slugs attached. Empty = no tag filter. Matches any-of (OR
+	// semantics) rather than all-of -- agents pick filters to widen
+	// what they see, not narrow it.
+	TagSlugs []string
 	// Limit caps the page; 0 falls back to 50, max 200.
 	Limit int
 }
@@ -162,6 +168,11 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 	q := "%" + strings.ToLower(strings.TrimSpace(p.Query)) + "%"
 	hasQuery := strings.TrimSpace(p.Query) != ""
 
+	tagSlugs := p.TagSlugs
+	if tagSlugs == nil {
+		tagSlugs = []string{}
+	}
+
 	rows, err := r.pool.Query(ctx, `
 		SELECT
 		  t.id, t.tenant_id, t.conversation_id, t.state, t.priority, t.required_skills,
@@ -170,7 +181,8 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 		  c.channel,
 		  COALESCE(cu.display_name, ''),
 		  COALESCE(lm.body, ''),
-		  COALESCE(mc.cnt, 0)
+		  COALESCE(mc.cnt, 0),
+		  COALESCE(tg.tags, '[]'::jsonb)
 		FROM tickets t
 		JOIN conversations c ON c.id = t.conversation_id
 		JOIN customers     cu ON cu.id = c.customer_id
@@ -183,6 +195,17 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 		  SELECT count(*) AS cnt FROM messages
 		  WHERE tenant_id = t.tenant_id AND ticket_id = t.id
 		) mc ON TRUE
+		LEFT JOIN LATERAL (
+		  SELECT jsonb_agg(jsonb_build_object(
+		           'id',    tg.id,
+		           'slug',  tg.slug,
+		           'name',  tg.name,
+		           'color', tg.color
+		         ) ORDER BY tg.slug) AS tags
+		  FROM ticket_tags tt
+		  JOIN tags tg ON tg.id = tt.tag_id
+		  WHERE tt.tenant_id = t.tenant_id AND tt.ticket_id = t.id
+		) tg ON TRUE
 		WHERE t.tenant_id = $1
 		  AND t.state::text = ANY($2)
 		  AND (cardinality($3::text[]) = 0 OR c.channel = ANY($3))
@@ -192,12 +215,18 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 		      SELECT 1 FROM messages
 		      WHERE tenant_id = t.tenant_id AND ticket_id = t.id
 		        AND lower(body) LIKE $8))
+		  AND (cardinality($10::text[]) = 0 OR EXISTS (
+		      SELECT 1 FROM ticket_tags tt2
+		      JOIN tags tg2 ON tg2.id = tt2.tag_id
+		      WHERE tt2.tenant_id = t.tenant_id
+		        AND tt2.ticket_id = t.id
+		        AND tg2.slug = ANY($10)))
 		ORDER BY t.priority ASC, t.created_at ASC
 		LIMIT $9`,
 		p.TenantID, stateStrs, channels,
 		p.AssignedAgentID, assignedMine, assignedUnassigned,
 		hasQuery, q,
-		p.Limit)
+		p.Limit, tagSlugs)
 	if err != nil {
 		return nil, err
 	}
@@ -206,23 +235,30 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 	out := make([]ListItem, 0, p.Limit)
 	for rows.Next() {
 		var (
-			it      ListItem
-			channel string
-			body    string
-			count   int
+			it       ListItem
+			channel  string
+			body     string
+			count    int
+			tagsJSON []byte
 		)
 		if err := rows.Scan(
 			&it.ID, &it.TenantID, &it.ConversationID, &it.State, &it.Priority,
 			&it.RequiredSkills, &it.AssignedAgentID, &it.SLAFirstResponseDue,
 			&it.SLAResolutionDue, &it.FirstResponseAt, &it.ResolvedAt,
 			&it.ClosedAt, &it.CreatedAt, &it.UpdatedAt,
-			&channel, &it.CustomerName, &body, &count,
+			&channel, &it.CustomerName, &body, &count, &tagsJSON,
 		); err != nil {
 			return nil, err
 		}
 		it.Channel = channel
 		it.LastMessageBody = body
 		it.MessageCount = count
+		it.Tags = []TagBrief{}
+		if len(tagsJSON) > 0 {
+			if err := json.Unmarshal(tagsJSON, &it.Tags); err != nil {
+				return nil, fmt.Errorf("ticket: decode tags: %w", err)
+			}
+		}
 		out = append(out, it)
 	}
 	return out, rows.Err()

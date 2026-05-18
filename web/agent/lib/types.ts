@@ -52,6 +52,14 @@ export interface AgentPresence {
   last_heartbeat: string;
 }
 
+export interface Tag {
+  id: string;
+  tenant_id?: string;
+  slug: string;
+  name: string;
+  color?: string | null;
+}
+
 export interface AtRiskTicket {
   ticket_id: string;
   priority: number;

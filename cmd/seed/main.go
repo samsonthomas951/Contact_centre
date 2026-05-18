@@ -89,6 +89,9 @@ func run() error {
 	if err := upsertCannedReplies(ctx, tx); err != nil {
 		return err
 	}
+	if err := upsertTags(ctx, tx); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -351,6 +354,68 @@ func upsertCannedReplies(ctx context.Context, tx pgx.Tx) error {
 			  SET title = EXCLUDED.title, body = EXCLUDED.body`,
 			DemoTenantID, r.Owner, r.Shortcut, r.Title, r.Body); err != nil {
 			return fmt.Errorf("seed: canned reply %s: %w", r.Shortcut, err)
+		}
+	}
+	return nil
+}
+
+// upsertTags seeds four tenant tags and attaches a couple to the
+// demo tickets so the inbox renders chips out of the box. Stable
+// UUIDs (NewSHA1 with a namespace) keep the seed idempotent.
+func upsertTags(ctx context.Context, tx pgx.Tx) error {
+	type tagRow struct {
+		Slug  string
+		Name  string
+		Color string
+	}
+	tagNS := uuid.MustParse("88888888-8888-8888-8888-888888888888")
+	tagFor := func(slug string) uuid.UUID {
+		return uuid.NewSHA1(tagNS, []byte(slug))
+	}
+	tags := []tagRow{
+		{"billing", "Billing", "f59e0b"},
+		{"refund", "Refund", "ef4444"},
+		{"urgent", "Urgent", "dc2626"},
+		{"vip", "VIP", "8b5cf6"},
+	}
+	for _, t := range tags {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tags (id, tenant_id, slug, name, color)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (tenant_id, slug) DO UPDATE
+			  SET name  = EXCLUDED.name,
+			      color = EXCLUDED.color`,
+			tagFor(t.Slug), DemoTenantID, t.Slug, t.Name, t.Color); err != nil {
+			return fmt.Errorf("seed: tag %s: %w", t.Slug, err)
+		}
+	}
+
+	// Attach tags to a couple of the demo tickets so the inbox row
+	// shows them. We reconstruct the same ticket IDs the conversation
+	// seeder builds; the (ticket_id, tag_id) PK + ON CONFLICT keeps
+	// this idempotent.
+	ns := uuid.MustParse("99999999-9999-9999-9999-999999999999")
+	type attach struct {
+		Idx     int
+		Channel string
+		ExtRef  string
+		Slugs   []string
+	}
+	for _, a := range []attach{
+		// Otieno's refund tweet -> refund + urgent
+		{1, "x", "X_USR_42", []string{"refund", "urgent"}},
+		// Achieng's WhatsApp upgrade -> billing + vip
+		{2, "wa", "254799000111", []string{"billing", "vip"}},
+	} {
+		ticketID := uuid.NewSHA1(ns, fmt.Appendf(nil, "t:%d:%s:%s", a.Idx, a.Channel, a.ExtRef))
+		for _, slug := range a.Slugs {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO ticket_tags (tenant_id, ticket_id, tag_id)
+				VALUES ($1, $2, $3)
+				ON CONFLICT DO NOTHING`,
+				DemoTenantID, ticketID, tagFor(slug)); err != nil {
+				return fmt.Errorf("seed: ticket_tag %s/%s: %w", a.ExtRef, slug, err)
+			}
 		}
 	}
 	return nil

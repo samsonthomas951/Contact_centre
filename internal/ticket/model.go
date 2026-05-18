@@ -50,10 +50,21 @@ type Ticket struct {
 // Returned by Repo.List only; Get still returns a plain Ticket.
 type ListItem struct {
 	Ticket
-	Channel         string `json:"channel"`
-	CustomerName    string `json:"customer_name"`
-	LastMessageBody string `json:"last_message_body,omitempty"`
-	MessageCount    int    `json:"message_count"`
+	Channel         string     `json:"channel"`
+	CustomerName    string     `json:"customer_name"`
+	LastMessageBody string     `json:"last_message_body,omitempty"`
+	MessageCount    int        `json:"message_count"`
+	Tags            []TagBrief `json:"tags"`
+}
+
+// TagBrief is the minimal tag shape the inbox renders inline. Held
+// in the ticket package to avoid a circular import with internal/tag
+// (the tag service is the one that loads the canonical model).
+type TagBrief struct {
+	ID    uuid.UUID `json:"id"`
+	Slug  string    `json:"slug"`
+	Name  string    `json:"name"`
+	Color *string   `json:"color,omitempty"`
 }
 
 // Message mirrors the public columns of the messages partitioned table.

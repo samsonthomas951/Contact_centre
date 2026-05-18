@@ -2,6 +2,7 @@
 
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { useTransition } from "react";
+import type { Tag } from "@/lib/types";
 
 // FilterBar drives the inbox via URL search params so every filter is
 // shareable, bookmarkable, and survives a refresh. Inputs are
@@ -36,7 +37,7 @@ const ASSIGNED: { value: string; label: string }[] = [
   { value: "unassigned",  label: "Unassigned" },
 ];
 
-export function FilterBar() {
+export function FilterBar({ tags = [] }: { tags?: Tag[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const sp = useSearchParams();
@@ -62,6 +63,7 @@ export function FilterBar() {
 
   const selectedChannels = sp.getAll("channel");
   const selectedStates   = sp.getAll("state");
+  const selectedTags     = sp.getAll("tag");
   const assigned         = sp.get("assigned") ?? "";
   const q                = sp.get("q") ?? "";
 
@@ -130,18 +132,71 @@ export function FilterBar() {
         ))}
         {(selectedChannels.length > 0 ||
           selectedStates.length > 0 ||
+          selectedTags.length > 0 ||
           q !== "" ||
           assigned !== "") && (
           <button
             type="button"
-            onClick={() => update({ channel: [], state: [], q: null, assigned: null })}
+            onClick={() =>
+              update({ channel: [], state: [], tag: [], q: null, assigned: null })
+            }
             className="ml-auto rounded px-2 py-1 text-xs text-slate-500 hover:bg-slate-100"
           >
             Clear all
           </button>
         )}
       </div>
+
+      {tags.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 text-xs">
+          <span className="self-center text-slate-500">Tags:</span>
+          {tags.map((t) => (
+            <TagToggle
+              key={t.id}
+              tag={t}
+              active={selectedTags.includes(t.slug)}
+              onClick={() => {
+                const next = selectedTags.includes(t.slug)
+                  ? selectedTags.filter((x) => x !== t.slug)
+                  : [...selectedTags, t.slug];
+                update({ tag: next });
+              }}
+            />
+          ))}
+        </div>
+      )}
     </div>
+  );
+}
+
+// TagToggle paints the active state with the tag's own colour so the
+// active filter visually matches the chips on the rows.
+function TagToggle({
+  tag,
+  active,
+  onClick,
+}: {
+  tag: Tag;
+  active: boolean;
+  onClick: () => void;
+}) {
+  const fill = tag.color ? `#${tag.color}` : "#94a3b8";
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={
+        active
+          ? { backgroundColor: fill, borderColor: fill, color: "white" }
+          : undefined
+      }
+      className={
+        "rounded-full border px-2.5 py-0.5 text-xs " +
+        (active ? "" : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50")
+      }
+    >
+      {tag.name}
+    </button>
   );
 }
 

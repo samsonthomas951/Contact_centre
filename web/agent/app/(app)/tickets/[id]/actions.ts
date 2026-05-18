@@ -1,8 +1,8 @@
 "use server";
 
-import { gatewayPost, gatewayPatch, gatewayUpload } from "@/lib/api";
+import { gatewayPost, gatewayPatch, gatewayUpload, gatewayDelete } from "@/lib/api";
 import { revalidatePath } from "next/cache";
-import type { Message, Ticket } from "@/lib/types";
+import type { Message, Ticket, Tag } from "@/lib/types";
 
 // sendMessage is the server action the composer calls. The bearer
 // token rides through gatewayPost (server-only); the client never
@@ -66,6 +66,46 @@ export interface CannedReply {
   body: string;
   channel?: string | null;
   owner_agent_id?: string | null;
+}
+
+// loadTags returns both the tags attached to this ticket and the
+// full catalogue, in parallel, so the TicketTags editor can render
+// a working picker without a second round-trip on user interaction.
+export async function loadTags(ticketId: string): Promise<{
+  attached: Tag[];
+  available: Tag[];
+}> {
+  const api = await import("@/lib/api");
+  try {
+    const [a, b] = await Promise.all([
+      api.gatewayJSON<{ tags: Tag[] }>(`/v1/tickets/${ticketId}/tags/`, {
+        cache: "no-store",
+      }),
+      api.gatewayJSON<{ tags: Tag[] }>("/v1/tags/", { cache: "no-store" }),
+    ]);
+    return { attached: a.tags ?? [], available: b.tags ?? [] };
+  } catch {
+    return { attached: [], available: [] };
+  }
+}
+
+// attachTag posts to the per-ticket /tags route. Any authed role
+// may call; the gateway validates ticket + tag belong to the tenant.
+export async function attachTag(ticketId: string, tagId: string): Promise<void> {
+  await gatewayPost<{ tag_id: string }, void>(
+    `/v1/tickets/${ticketId}/tags/`,
+    { tag_id: tagId },
+  );
+  revalidatePath(`/tickets/${ticketId}`);
+  revalidatePath("/inbox");
+}
+
+// detachTag removes the link. 404 on a missing link is intentionally
+// not treated as an error -- the desired end state is "not attached".
+export async function detachTag(ticketId: string, tagId: string): Promise<void> {
+  await gatewayDelete(`/v1/tickets/${ticketId}/tags/${tagId}`);
+  revalidatePath(`/tickets/${ticketId}`);
+  revalidatePath("/inbox");
 }
 
 // loadCannedReplies returns the visible set for the calling agent.

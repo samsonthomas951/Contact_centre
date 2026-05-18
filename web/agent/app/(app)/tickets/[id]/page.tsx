@@ -7,7 +7,8 @@ import { MessageThread } from "@/components/MessageThread";
 import { TicketHeader } from "@/components/TicketHeader";
 import { CustomerSidebar } from "@/components/CustomerSidebar";
 import { TicketShortcuts } from "@/components/TicketShortcuts";
-import { loadCannedReplies } from "./actions";
+import { TicketTags } from "@/components/TicketTags";
+import { loadCannedReplies, loadTags } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -48,10 +49,12 @@ export default async function TicketPage({
   const ticketPromise = loadTicket(id);
   const messagesPromise = loadMessages(id);
   const cannedRepliesPromise = loadCannedReplies();
+  const tagsPromise = loadTags(id);
 
-  const [ticket, cannedReplies] = await Promise.all([
+  const [ticket, cannedReplies, tags] = await Promise.all([
     ticketPromise,
     cannedRepliesPromise,
+    tagsPromise,
   ]);
 
   return (
@@ -59,6 +62,13 @@ export default async function TicketPage({
       {/* Thread + composer column */}
       <div className="flex flex-1 flex-col bg-white">
         <TicketHeader ticket={ticket} />
+        <div className="border-b border-slate-200 px-6 py-2">
+          <TicketTags
+            ticketId={id}
+            attached={tags.attached}
+            available={tags.available}
+          />
+        </div>
         <div className="flex-1 overflow-auto px-6 py-4">
           <Suspense fallback={<MessageSkeleton />}>
             <MessageThreadAsync messagesPromise={messagesPromise} />

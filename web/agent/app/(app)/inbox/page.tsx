@@ -3,6 +3,8 @@ import { gatewayJSON, GatewayError } from "@/lib/api";
 import { formatRelative, priorityLabel } from "@/lib/format";
 import { FilterBar } from "./FilterBar";
 import { InboxShortcuts } from "@/components/InboxShortcuts";
+import { TagChip } from "@/components/TagChip";
+import type { Tag } from "@/lib/types";
 
 // Server component. The inbox renders the ticket list at request time
 // with `cache: 'no-store'` -- ticket state changes constantly and the
@@ -26,6 +28,7 @@ interface ListItem {
   message_count: number;
   created_at: string;
   assigned_agent_id?: string | null;
+  tags?: Tag[];
 }
 
 export default async function InboxPage({
@@ -38,9 +41,18 @@ export default async function InboxPage({
   const path = buildPath(sp);
 
   let tickets: ListItem[] = [];
+  let tags: Tag[] = [];
   try {
-    const res = await gatewayJSON<{ tickets: ListItem[] }>(path, { cache: "no-store" });
-    tickets = res.tickets ?? [];
+    // Tags fetched in parallel with tickets so the FilterBar can
+    // render its chips without a follow-up round-trip.
+    const [tk, tg] = await Promise.all([
+      gatewayJSON<{ tickets: ListItem[] }>(path, { cache: "no-store" }),
+      gatewayJSON<{ tags: Tag[] }>("/v1/tags/", { cache: "no-store" }).catch(
+        () => ({ tags: [] as Tag[] }),
+      ),
+    ]);
+    tickets = tk.tickets ?? [];
+    tags = tg.tags ?? [];
   } catch (e) {
     if (e instanceof GatewayError && e.status === 401) {
       return <div className="p-6 text-sm text-slate-600">Session expired. Reload to sign in again.</div>;
@@ -57,7 +69,7 @@ export default async function InboxPage({
         </div>
         <span className="text-sm text-slate-500">{tickets.length} tickets</span>
       </header>
-      <FilterBar />
+      <FilterBar tags={tags} />
       <ul className="flex-1 overflow-auto bg-white">
         {tickets.length === 0 ? (
           <li className="p-6 text-sm text-slate-500">
@@ -80,7 +92,7 @@ function buildPath(sp: Record<string, string | string[] | undefined>): string {
     const v = sp[key];
     if (typeof v === "string" && v !== "") q.set(key, v);
   }
-  for (const key of ["channel", "state"] as const) {
+  for (const key of ["channel", "state", "tag"] as const) {
     const v = sp[key];
     if (Array.isArray(v)) for (const item of v) q.append(key, item);
     else if (typeof v === "string" && v !== "") q.append(key, v);
@@ -115,6 +127,13 @@ function TicketRow({ t }: { t: ListItem }) {
             )}
           </div>
           <div className="truncate text-xs text-slate-500">{preview || "(no messages)"}</div>
+          {t.tags && t.tags.length > 0 && (
+            <div className="mt-1 flex flex-wrap gap-1">
+              {t.tags.map((tag) => (
+                <TagChip key={tag.id} tag={tag} />
+              ))}
+            </div>
+          )}
         </div>
         <div className="shrink-0 text-right text-xs text-slate-500">
           <div>{formatRelative(t.created_at)}</div>
