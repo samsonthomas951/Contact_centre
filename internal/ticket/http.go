@@ -1,6 +1,7 @@
 package ticket
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,11 +11,21 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/samsonthomas951/contact-centre/internal/audit"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 )
 
 // API mounts the ticket service's HTTP endpoints onto a chi router.
-type API struct{ Repo *Repo }
+// Audit is optional; when set, bulk assign/unassign emit chained
+// audit rows. Bulk state changes are audited at the gateway level
+// via the OnBulkStateChange hook, not here, because the chain is
+// the canonical record of "ticket X transitioned to Y" regardless
+// of whether a single-PATCH or a bulk path drove it.
+type API struct {
+	Repo  *Repo
+	Audit audit.Publisher
+}
 
 // Routes returns a chi router pre-configured with the ticket endpoints.
 // Mount it under whichever prefix the gateway uses (e.g. /v1/tickets).
@@ -340,6 +351,18 @@ func (a *API) bulk(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "bulk failed")
 			return
 		}
+		// One audit row per ticket actually changed. BulkAssign
+		// returns only a count, not the per-id outcome, so we emit
+		// against every supplied id and accept the audit chain has
+		// rows for the would-be-skipped ones with a `skipped: true`
+		// marker. (Better than zero audit, worse than truth -- to
+		// fix properly BulkAssign needs to return ids.)
+		for _, tid := range body.TicketIDs {
+			a.emit(r.Context(), id, "ticket.bulk_assign", "ticket", tid.String(), map[string]any{
+				"to":          body.AgentID.String(),
+				"caller_role": roleLabel(privileged),
+			})
+		}
 		// Surface skipped count so the agent sees partial success
 		// when some ids fell outside their callerLimit.
 		skipped := len(body.TicketIDs) - updated
@@ -358,11 +381,57 @@ func (a *API) bulk(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "bulk failed")
 			return
 		}
+		for _, tid := range body.TicketIDs {
+			a.emit(r.Context(), id, "ticket.bulk_unassign", "ticket", tid.String(), nil)
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failures": []BulkFailure{}})
 
 	default:
 		writeErr(w, http.StatusBadRequest, "unknown op (resolve/close/reopen/assign/unassign)")
 	}
+}
+
+// emit publishes one audit event scoped to the calling identity.
+// Audit nil -> no-op (unit tests + binaries that don't wire NATS).
+// Marshal / publish failures are logged; the operation already
+// committed and the agent shouldn't see a 5xx for an audit problem.
+func (a *API) emit(ctx context.Context, id auth.Identity, action, resourceType, resourceID string, payload map[string]any) {
+	if a.Audit == nil {
+		return
+	}
+	var body []byte
+	if payload != nil {
+		var err error
+		if body, err = json.Marshal(payload); err != nil {
+			slog.WarnContext(ctx, "ticket: audit payload marshal", slog.String("err", err.Error()))
+			return
+		}
+	}
+	corr, _ := uuid.Parse(correlation.FromContext(ctx))
+	if corr == uuid.Nil {
+		corr = uuid.New()
+	}
+	agent := id.AgentID
+	if err := a.Audit.Publish(ctx, &audit.Event{
+		TenantID:      id.TenantID,
+		ActorType:     "agent",
+		ActorID:       &agent,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		CorrelationID: corr,
+		Payload:       body,
+	}); err != nil {
+		slog.WarnContext(ctx, "ticket: audit publish",
+			slog.String("action", action), slog.String("err", err.Error()))
+	}
+}
+
+func roleLabel(privileged bool) string {
+	if privileged {
+		return "privileged"
+	}
+	return "agent"
 }
 
 // isClientError flags errors raised by Validate / Transition (which

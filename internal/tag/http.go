@@ -1,6 +1,7 @@
 package tag
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -9,14 +10,23 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/samsonthomas951/contact-centre/internal/audit"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 )
 
 // API mounts the tag CRUD endpoints (mount at /v1/tags) plus the
 // per-ticket attach/detach routes (mount at /v1/tickets/{id}/tags
 // via the gateway router so the route lives next to the ticket
 // itself).
-type API struct{ Repo *Repo }
+//
+// Audit is optional; nil means the handlers don't emit audit
+// events. Production wires the gateway's JetStream publisher so
+// every config + attach mutation lands on the hash chain.
+type API struct {
+	Repo  *Repo
+	Audit audit.Publisher
+}
 
 // Routes returns the /v1/tags chi tree.
 //
@@ -88,6 +98,9 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "tag: create", slog.String("err", err.Error()))
 		writeErr(w, http.StatusInternalServerError, "create failed")
 	default:
+		a.emit(r.Context(), id, "tag.create", "tag", t.ID.String(), map[string]any{
+			"slug": t.Slug, "name": t.Name, "color": t.Color,
+		})
 		writeJSON(w, http.StatusCreated, t)
 	}
 }
@@ -109,6 +122,7 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, http.StatusInternalServerError, "delete failed")
 	default:
+		a.emit(r.Context(), id, "tag.delete", "tag", tagID.String(), nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -157,6 +171,9 @@ func (a *API) attach(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "tag: attach", slog.String("err", err.Error()))
 		writeErr(w, http.StatusInternalServerError, "attach failed")
 	default:
+		a.emit(r.Context(), id, "ticket.tag.attach", "ticket", tid.String(), map[string]any{
+			"tag_id": body.TagID.String(),
+		})
 		w.WriteHeader(http.StatusNoContent)
 	}
 }
@@ -181,7 +198,46 @@ func (a *API) detach(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "detach failed")
 		return
 	}
+	a.emit(r.Context(), id, "ticket.tag.detach", "ticket", tid.String(), map[string]any{
+		"tag_id": tagID.String(),
+	})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// emit pushes one event onto the audit chain. Build-failure of the
+// payload or a NATS publish failure are logged but never propagated
+// -- the hash chain is a record of what happened, not a precondition
+// for the operation itself.
+func (a *API) emit(ctx context.Context, id auth.Identity, action, resourceType, resourceID string, payload map[string]any) {
+	if a.Audit == nil {
+		return
+	}
+	var body []byte
+	if payload != nil {
+		var err error
+		if body, err = json.Marshal(payload); err != nil {
+			slog.WarnContext(ctx, "tag: audit payload marshal", slog.String("err", err.Error()))
+			return
+		}
+	}
+	corr, _ := uuid.Parse(correlation.FromContext(ctx))
+	if corr == uuid.Nil {
+		corr = uuid.New() // fall back so Validate() doesn't reject
+	}
+	agent := id.AgentID
+	if err := a.Audit.Publish(ctx, &audit.Event{
+		TenantID:      id.TenantID,
+		ActorType:     "agent",
+		ActorID:       &agent,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		CorrelationID: corr,
+		Payload:       body,
+	}); err != nil {
+		slog.WarnContext(ctx, "tag: audit publish",
+			slog.String("action", action), slog.String("err", err.Error()))
+	}
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

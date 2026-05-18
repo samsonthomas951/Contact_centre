@@ -104,10 +104,10 @@ func (r *Repo) Create(ctx context.Context, p CreateParams) (*Reply, error) {
 	err = r.Pool.QueryRow(ctx, `
 		INSERT INTO canned_replies
 		  (tenant_id, owner_agent_id, shortcut, title, body, channel, actions)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
 		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions`,
 		p.TenantID, p.OwnerAgentID, p.Shortcut, strings.TrimSpace(p.Title),
-		p.Body, p.Channel, actionsJSON,
+		p.Body, p.Channel, string(actionsJSON),
 	).Scan(&out.ID, &out.TenantID, &out.OwnerAgentID, &out.Shortcut,
 		&out.Title, &out.Body, &out.Channel, &actionsRaw)
 	if err != nil {
@@ -223,10 +223,10 @@ func (r *Repo) Update(ctx context.Context, p UpdateParams) (*Reply, error) {
 		  body     = COALESCE($4, body),
 		  shortcut = COALESCE($5, shortcut),
 		  channel  = $6,
-		  actions  = $7
+		  actions  = $7::jsonb
 		WHERE tenant_id = $1 AND id = $2
 		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions`,
-		p.TenantID, p.ID, p.Title, p.Body, p.Shortcut, ch, actionsJSON,
+		p.TenantID, p.ID, p.Title, p.Body, p.Shortcut, ch, string(actionsJSON),
 	).Scan(&out.ID, &out.TenantID, &out.OwnerAgentID, &out.Shortcut,
 		&out.Title, &out.Body, &out.Channel, &actionsRaw)
 	if errors.Is(err, pgx.ErrNoRows) {

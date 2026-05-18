@@ -38,6 +38,7 @@ import (
 
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/audit"
 	"github.com/samsonthomas951/contact-centre/internal/cannedreply"
 	tagpkg "github.com/samsonthomas951/contact-centre/internal/tag"
 	"github.com/samsonthomas951/contact-centre/internal/connector/email"
@@ -183,6 +184,15 @@ func run() error {
 		return err
 	}
 
+	// auditPub adapts the JetStream handle to the audit.Publisher
+	// interface so the tag / cannedreply / ticket APIs can emit
+	// chained audit events without importing JetStream directly.
+	// Failure to publish is logged but never breaks the caller --
+	// the chain is a record, not a precondition.
+	auditPub := audit.FuncPublisher(func(c context.Context, e *audit.Event) error {
+		return audit.Publish(c, js, e)
+	})
+
 	// Ticket-service ingress consumer: turns ingress.> events into
 	// customer/conversation/ticket/message rows. Runs in a goroutine
 	// for the gateway's life. In a fully-extracted topology this lives
@@ -207,6 +217,19 @@ func run() error {
 		_, _ = js.Publish(ctx, "ticket.state_change", ev,
 			jetstream.WithMsgID(ticketID.String()+":"+string(to)))
 		publishRealtime(ctx, rtHub, pool, tenantID, ticketID, "ticket.state_change")
+		// Audit the transition. Actor is "system" here because the
+		// hook fires from any state-change path (PATCH, bulk, macro,
+		// routing engine). The handler-level emits add an `agent`
+		// row when the actor is identifiable.
+		_ = auditPub.Publish(ctx, &audit.Event{
+			TenantID:      tenantID,
+			ActorType:     "system",
+			Action:        "ticket.state_change",
+			ResourceType:  "ticket",
+			ResourceID:    ticketID.String(),
+			CorrelationID: uuid.New(),
+			Payload:       ev,
+		})
 	}
 
 	// Bulk hook: emit ONE realtime envelope per batch so the
@@ -215,6 +238,10 @@ func run() error {
 	// id (so CSAT + webhook fan-out stay correct) but the WS hub
 	// gets a single "tickets.bulk_state_change" envelope.
 	ticketRepo.OnBulkStateChange = func(ctx context.Context, tenantID uuid.UUID, ids []uuid.UUID, to ticket.State) {
+		// JetStream domain stream + audit chain both want per-id rows
+		// (CSAT consumer expects one ticket.state_change per ticket;
+		// the audit chain wants a row per ticket for chain integrity).
+		// Realtime gets one envelope below.
 		for _, id := range ids {
 			ev, err := json.Marshal(struct {
 				TicketID uuid.UUID `json:"ticket_id"`
@@ -226,6 +253,15 @@ func run() error {
 			}
 			_, _ = js.Publish(ctx, "ticket.state_change", ev,
 				jetstream.WithMsgID(id.String()+":"+string(to)))
+			_ = auditPub.Publish(ctx, &audit.Event{
+				TenantID:      tenantID,
+				ActorType:     "system",
+				Action:        "ticket.state_change",
+				ResourceType:  "ticket",
+				ResourceID:    id.String(),
+				CorrelationID: uuid.New(),
+				Payload:       ev,
+			})
 		}
 		// Single batched realtime envelope. The agent UIs already
 		// router.refresh() on any inbound frame, so one is enough.
@@ -294,6 +330,32 @@ func run() error {
 				slog.String("err", err.Error()))
 		}
 	}()
+
+	// Audit consumer: drains audit.events.> from JetStream and
+	// appends each event to the hash-chained audit_events ledger.
+	// EnsureStream is idempotent; safe to call alongside the
+	// existing natsx.EnsureStreams (which creates the domain
+	// streams). Without this consumer, audit.Publish() events would
+	// sit in JetStream unconsumed -- the chain stays empty.
+	if err := audit.EnsureStream(ctx, js); err != nil {
+		slog.Error("audit: ensure stream", slog.String("err", err.Error()))
+	} else {
+		auditWriter := audit.NewWriter(pool)
+		// Bootstrap loads the last row's seq + hash so the chain
+		// resumes after a restart instead of writing a fresh
+		// genesis hash that would break verification.
+		if err := auditWriter.Bootstrap(ctx); err != nil {
+			slog.Error("audit: writer bootstrap", slog.String("err", err.Error()))
+		} else {
+			auditCons := audit.NewConsumer(auditWriter, js)
+			go func() {
+				if err := auditCons.Run(ctx); err != nil {
+					slog.Error("audit: consumer exited",
+						slog.String("err", err.Error()))
+				}
+			}()
+		}
+	}
 
 	verifier, err := auth.NewVerifier(ctx, oidcCfg)
 	if err != nil {
@@ -409,8 +471,9 @@ func run() error {
 		EmailStore: emailStore,
 		Docs:         docsAPI,
 		Customer:     &customer.API{Repo: customer.NewRepo(pool)},
-		CannedReply:  &cannedreply.API{Repo: cannedreply.NewRepo(pool)},
-		Tag:          &tagpkg.API{Repo: tagpkg.NewRepo(pool)},
+		CannedReply:  &cannedreply.API{Repo: cannedreply.NewRepo(pool), Audit: auditPub},
+		Tag:          &tagpkg.API{Repo: tagpkg.NewRepo(pool), Audit: auditPub},
+		AuditPub:     auditPub,
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -452,15 +515,19 @@ type routerDeps struct {
 	Customer    *customer.API
 	CannedReply *cannedreply.API
 	Tag         *tagpkg.API
+	// AuditPub is threaded into the ticket API at Mount time (the
+	// ticket.API isn't pre-constructed because the route mount
+	// builds it inline). Tests pass NoopPublisher.
+	AuditPub audit.Publisher
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust, cr, tg :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust, cr, tg, ap :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
 		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta,
-		d.Email, d.EmailStore, d.Customer, d.CannedReply, d.Tag
+		d.Email, d.EmailStore, d.Customer, d.CannedReply, d.Tag, d.AuditPub
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -555,7 +622,7 @@ func newRouter(d routerDeps) http.Handler {
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(auth.Middleware(v))
 		r.Get("/me", auth.MeHandler)
-		r.Mount("/tickets", (&ticket.API{Repo: tr}).Routes())
+		r.Mount("/tickets", (&ticket.API{Repo: tr, Audit: ap}).Routes())
 		if tg != nil {
 			r.Mount("/tags", tg.Routes())
 			// Per-ticket attach/detach lives next to the ticket so the

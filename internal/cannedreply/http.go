@@ -1,6 +1,7 @@
 package cannedreply
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -9,11 +10,19 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/samsonthomas951/contact-centre/internal/audit"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/pkg/correlation"
 )
 
 // API mounts the CRUD endpoints. Mount under /v1/canned-replies.
-type API struct{ Repo *Repo }
+// Audit is optional; when set, every create/update/delete lands on
+// the hash chain so a tampered reply (or a malicious admin) is
+// detectable post-hoc.
+type API struct {
+	Repo  *Repo
+	Audit audit.Publisher
+}
 
 // Routes returns the chi router. Any authed role can list/create;
 // edit/delete is owner-or-admin (enforced in the repo).
@@ -80,6 +89,11 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "cannedreply: create", slog.String("err", err.Error()))
 		writeErr(w, http.StatusInternalServerError, "create failed")
 	default:
+		a.emit(r.Context(), id, "canned_reply.create", "canned_reply", rep.ID.String(), map[string]any{
+			"shortcut": rep.Shortcut,
+			"scope":    scopeLabel(rep.OwnerAgentID),
+			"actions":  len(rep.Actions),
+		})
 		writeJSON(w, http.StatusCreated, rep)
 	}
 }
@@ -123,6 +137,10 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 		slog.ErrorContext(r.Context(), "cannedreply: update", slog.String("err", err.Error()))
 		writeErr(w, http.StatusInternalServerError, "update failed")
 	default:
+		a.emit(r.Context(), id, "canned_reply.update", "canned_reply", rep.ID.String(), map[string]any{
+			"shortcut": rep.Shortcut,
+			"actions":  len(rep.Actions),
+		})
 		writeJSON(w, http.StatusOK, rep)
 	}
 }
@@ -147,8 +165,53 @@ func (a *API) delete(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		writeErr(w, http.StatusInternalServerError, "delete failed")
 	default:
+		a.emit(r.Context(), id, "canned_reply.delete", "canned_reply", repID.String(), nil)
 		w.WriteHeader(http.StatusNoContent)
 	}
+}
+
+// emit publishes one audit event. nil Audit -> no-op. Payload
+// marshal + publish failures are logged but never surface to the
+// caller -- the chain records what happened, it's not a gate.
+func (a *API) emit(ctx context.Context, id auth.Identity, action, resourceType, resourceID string, payload map[string]any) {
+	if a.Audit == nil {
+		return
+	}
+	var body []byte
+	if payload != nil {
+		var err error
+		if body, err = json.Marshal(payload); err != nil {
+			slog.WarnContext(ctx, "cannedreply: audit payload marshal", slog.String("err", err.Error()))
+			return
+		}
+	}
+	corr, _ := uuid.Parse(correlation.FromContext(ctx))
+	if corr == uuid.Nil {
+		corr = uuid.New()
+	}
+	agent := id.AgentID
+	if err := a.Audit.Publish(ctx, &audit.Event{
+		TenantID:      id.TenantID,
+		ActorType:     "agent",
+		ActorID:       &agent,
+		Action:        action,
+		ResourceType:  resourceType,
+		ResourceID:    resourceID,
+		CorrelationID: corr,
+		Payload:       body,
+	}); err != nil {
+		slog.WarnContext(ctx, "cannedreply: audit publish",
+			slog.String("action", action), slog.String("err", err.Error()))
+	}
+}
+
+// scopeLabel summarises ownership for the audit payload: "tenant"
+// for shared rows, "personal" for an agent's own reply.
+func scopeLabel(owner *uuid.UUID) string {
+	if owner == nil {
+		return "tenant"
+	}
+	return "personal"
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
