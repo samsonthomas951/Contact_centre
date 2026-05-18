@@ -95,20 +95,29 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := ListParams{TenantID: id.TenantID}
+	q := r.URL.Query()
+	p := ListParams{
+		TenantID:       id.TenantID,
+		AssignedFilter: q.Get("assigned"), // "", "mine", "unassigned", "all"
+		Query:          q.Get("q"),
+		Channels:       q["channel"],      // ?channel=fb&channel=email
+	}
+	// Always carry the caller's agent id so AssignedFilter=mine can use
+	// it without an extra round-trip from the handler.
+	agent := id.AgentID
+	p.AssignedAgentID = &agent
 
-	// `?mine=1` scopes to the caller's own queue (the agent inbox view).
-	// Default behaviour for an agent role is mine=1; supervisors get the
-	// full tenant view by default and can opt back into mine=1.
-	mine := r.URL.Query().Get("mine") == "1" ||
-		(r.URL.Query().Get("mine") == "" && !id.HasRole(auth.RoleSupervisor, auth.RoleAdmin))
-	if mine {
-		agent := id.AgentID
-		p.AssignedAgentID = &agent
+	// Back-compat shim: `?mine=1` still works as a synonym for
+	// `?assigned=mine`, and a missing `assigned` flag defaults to
+	// "mine" for agent role so the inbox stays scoped.
+	if p.AssignedFilter == "" {
+		if q.Get("mine") == "1" || !id.HasRole(auth.RoleSupervisor, auth.RoleAdmin) {
+			p.AssignedFilter = "mine"
+		}
 	}
 
 	// `?state=open&state=pending` filters; defaults to "open work".
-	if vs, ok := r.URL.Query()["state"]; ok {
+	if vs, ok := q["state"]; ok {
 		states := make([]State, 0, len(vs))
 		for _, s := range vs {
 			st := State(s)
@@ -119,8 +128,7 @@ func (a *API) list(w http.ResponseWriter, r *http.Request) {
 		p.States = states
 	}
 
-	if l := r.URL.Query().Get("limit"); l != "" {
-		// Tolerate junk; the repo clamps to [1, 200].
+	if l := q.Get("limit"); l != "" {
 		var n int
 		_, _ = fmt.Sscanf(l, "%d", &n)
 		p.Limit = n

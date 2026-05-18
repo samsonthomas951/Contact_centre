@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -104,18 +105,28 @@ type ListParams struct {
 	TenantID        uuid.UUID
 	States          []State
 	AssignedAgentID *uuid.UUID
+	// Channels filters to specific conversation channels (fb/ig/wa/
+	// widget/voice/email/x). Empty = all.
+	Channels []string
+	// AssignedFilter overrides AssignedAgentID's semantics:
+	//   "" / "all"    -> ignore AssignedAgentID
+	//   "mine"        -> WHERE assigned_agent_id = AssignedAgentID
+	//   "unassigned"  -> WHERE assigned_agent_id IS NULL
+	// Set "mine" by default for agent-role inbox; supervisors usually
+	// pass "all" so the whole tenant view stays visible.
+	AssignedFilter string
+	// Query case-insensitive substring match against messages.body for
+	// any message on the ticket. Empty = no text filter.
+	Query string
 	// Limit caps the page; 0 falls back to 50, max 200.
 	Limit int
 }
 
-// List returns tickets for the agent inbox view. Sorted by priority
-// (1=urgent first), then created_at ascending so the oldest urgent
-// ticket lands at the top -- the order an agent should work them.
-//
-// Keyset pagination is deferred to the next iteration; the supervisor
-// dashboard hits a different endpoint and the agent inbox is small
-// enough at <100 agents per tenant that LIMIT alone suffices.
-func (r *Repo) List(ctx context.Context, p ListParams) ([]Ticket, error) {
+// List returns the inbox view with conversation + customer joined so
+// each row has channel + customer_name + last message preview without
+// a follow-up round-trip. Sorted by priority then created_at so the
+// oldest urgent ticket lands at the top.
+func (r *Repo) List(ctx context.Context, p ListParams) ([]ListItem, error) {
 	if p.Limit <= 0 || p.Limit > 200 {
 		p.Limit = 50
 	}
@@ -127,30 +138,92 @@ func (r *Repo) List(ctx context.Context, p ListParams) ([]Ticket, error) {
 	for i, s := range states {
 		stateStrs[i] = string(s)
 	}
+	// pgx encodes a nil slice as SQL NULL, which would break the
+	// cardinality() = 0 guard below; normalize to an explicit empty
+	// slice so the SQL sees a real (zero-length) array.
+	channels := p.Channels
+	if channels == nil {
+		channels = []string{}
+	}
+
+	// Three assignment shapes via a small string sentinel so the SQL
+	// stays a single prepared statement rather than CASE-ing in code.
+	assignedMine, assignedUnassigned := false, false
+	switch p.AssignedFilter {
+	case "mine":
+		assignedMine = true
+	case "unassigned":
+		assignedUnassigned = true
+	}
+
+	// CITEXT-style case-insensitive LIKE on messages.body. EXISTS
+	// short-circuits per ticket; the partial index on
+	// messages(ticket_id) keeps this cheap.
+	q := "%" + strings.ToLower(strings.TrimSpace(p.Query)) + "%"
+	hasQuery := strings.TrimSpace(p.Query) != ""
 
 	rows, err := r.pool.Query(ctx, `
-		SELECT id, tenant_id, conversation_id, state, priority, required_skills,
-		       assigned_agent_id, sla_first_response_due, sla_resolution_due,
-		       first_response_at, resolved_at, closed_at, created_at, updated_at
-		FROM tickets
-		WHERE tenant_id = $1
-		  AND state::text = ANY($2)
-		  AND ($3::uuid IS NULL OR assigned_agent_id = $3)
-		ORDER BY priority ASC, created_at ASC
-		LIMIT $4`,
-		p.TenantID, stateStrs, p.AssignedAgentID, p.Limit)
+		SELECT
+		  t.id, t.tenant_id, t.conversation_id, t.state, t.priority, t.required_skills,
+		  t.assigned_agent_id, t.sla_first_response_due, t.sla_resolution_due,
+		  t.first_response_at, t.resolved_at, t.closed_at, t.created_at, t.updated_at,
+		  c.channel,
+		  COALESCE(cu.display_name, ''),
+		  COALESCE(lm.body, ''),
+		  COALESCE(mc.cnt, 0)
+		FROM tickets t
+		JOIN conversations c ON c.id = t.conversation_id
+		JOIN customers     cu ON cu.id = c.customer_id
+		LEFT JOIN LATERAL (
+		  SELECT body FROM messages
+		  WHERE tenant_id = t.tenant_id AND ticket_id = t.id
+		  ORDER BY created_at DESC LIMIT 1
+		) lm ON TRUE
+		LEFT JOIN LATERAL (
+		  SELECT count(*) AS cnt FROM messages
+		  WHERE tenant_id = t.tenant_id AND ticket_id = t.id
+		) mc ON TRUE
+		WHERE t.tenant_id = $1
+		  AND t.state::text = ANY($2)
+		  AND (cardinality($3::text[]) = 0 OR c.channel = ANY($3))
+		  AND (NOT $5::bool OR t.assigned_agent_id = $4)
+		  AND (NOT $6::bool OR t.assigned_agent_id IS NULL)
+		  AND (NOT $7::bool OR EXISTS (
+		      SELECT 1 FROM messages
+		      WHERE tenant_id = t.tenant_id AND ticket_id = t.id
+		        AND lower(body) LIKE $8))
+		ORDER BY t.priority ASC, t.created_at ASC
+		LIMIT $9`,
+		p.TenantID, stateStrs, channels,
+		p.AssignedAgentID, assignedMine, assignedUnassigned,
+		hasQuery, q,
+		p.Limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	out := make([]Ticket, 0, p.Limit)
+	out := make([]ListItem, 0, p.Limit)
 	for rows.Next() {
-		t, err := scanTicket(rows)
-		if err != nil {
+		var (
+			it      ListItem
+			channel string
+			body    string
+			count   int
+		)
+		if err := rows.Scan(
+			&it.ID, &it.TenantID, &it.ConversationID, &it.State, &it.Priority,
+			&it.RequiredSkills, &it.AssignedAgentID, &it.SLAFirstResponseDue,
+			&it.SLAResolutionDue, &it.FirstResponseAt, &it.ResolvedAt,
+			&it.ClosedAt, &it.CreatedAt, &it.UpdatedAt,
+			&channel, &it.CustomerName, &body, &count,
+		); err != nil {
 			return nil, err
 		}
-		out = append(out, *t)
+		it.Channel = channel
+		it.LastMessageBody = body
+		it.MessageCount = count
+		out = append(out, it)
 	}
 	return out, rows.Err()
 }

@@ -6,7 +6,7 @@ export type TicketState =
   | "new" | "open" | "pending" | "on_hold"
   | "resolved" | "closed" | "reopened";
 
-export type Channel = "fb" | "x" | "wa" | "ig" | "widget" | "voice";
+export type Channel = "fb" | "x" | "wa" | "ig" | "widget" | "voice" | "email";
 
 export interface Ticket {
   id: string;

@@ -45,6 +45,17 @@ type Ticket struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
 
+// ListItem enriches Ticket with the join-derived fields the inbox UI
+// needs to render a row without a follow-up round-trip per ticket.
+// Returned by Repo.List only; Get still returns a plain Ticket.
+type ListItem struct {
+	Ticket
+	Channel         string `json:"channel"`
+	CustomerName    string `json:"customer_name"`
+	LastMessageBody string `json:"last_message_body,omitempty"`
+	MessageCount    int    `json:"message_count"`
+}
+
 // Message mirrors the public columns of the messages partitioned table.
 type Message struct {
 	ID                int64      `json:"id"`
