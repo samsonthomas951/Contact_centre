@@ -6,6 +6,7 @@ package cannedreply
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -39,6 +40,22 @@ type Reply struct {
 	Title         string     `json:"title"`
 	Body          string     `json:"body"`
 	Channel       *string    `json:"channel,omitempty"`
+	// Actions are macro side-effects fired after the reply text is
+	// sent. Empty array = plain canned reply (the historic behaviour).
+	Actions []Action `json:"actions"`
+}
+
+// Action is a single macro step. The JSON shape is open-ended -- new
+// `type` values can be added without a migration -- but only the
+// types the composer knows how to execute are surfaced in the UI.
+//
+//	{"type":"set_state","to":"resolved"}
+//	{"type":"add_tag","tag_slug":"refund"}
+//	{"type":"assign","to":"me"|"unassign"|"<agent-uuid>"}
+type Action struct {
+	Type    string `json:"type"`
+	To      string `json:"to,omitempty"`
+	TagSlug string `json:"tag_slug,omitempty"`
 }
 
 // Repo is a thin pgx wrapper.
@@ -55,6 +72,7 @@ type CreateParams struct {
 	Title          string
 	Body           string
 	Channel        *string
+	Actions        []Action
 }
 
 // Create inserts a new reply. UNIQUE (tenant, owner, shortcut) is
@@ -70,23 +88,32 @@ func (r *Repo) Create(ctx context.Context, p CreateParams) (*Reply, error) {
 	if p.Channel != nil && !validChannel(*p.Channel) {
 		return nil, fmt.Errorf("%w: unknown channel %q", ErrInvalid, *p.Channel)
 	}
+	if err := validateActions(p.Actions); err != nil {
+		return nil, err
+	}
+	actionsJSON, err := marshalActions(p.Actions)
+	if err != nil {
+		return nil, err
+	}
 
 	var out Reply
-	err := r.Pool.QueryRow(ctx, `
+	var actionsRaw []byte
+	err = r.Pool.QueryRow(ctx, `
 		INSERT INTO canned_replies
-		  (tenant_id, owner_agent_id, shortcut, title, body, channel)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel`,
+		  (tenant_id, owner_agent_id, shortcut, title, body, channel, actions)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions`,
 		p.TenantID, p.OwnerAgentID, p.Shortcut, strings.TrimSpace(p.Title),
-		p.Body, p.Channel,
+		p.Body, p.Channel, actionsJSON,
 	).Scan(&out.ID, &out.TenantID, &out.OwnerAgentID, &out.Shortcut,
-		&out.Title, &out.Body, &out.Channel)
+		&out.Title, &out.Body, &out.Channel, &actionsRaw)
 	if err != nil {
 		if strings.Contains(err.Error(), "SQLSTATE 23505") {
 			return nil, fmt.Errorf("%w: shortcut %q already exists for this owner", ErrInvalid, p.Shortcut)
 		}
 		return nil, err
 	}
+	out.Actions = decodeActions(actionsRaw)
 	return &out, nil
 }
 
@@ -95,7 +122,7 @@ func (r *Repo) Create(ctx context.Context, p CreateParams) (*Reply, error) {
 // by shortcut so the picker is stable.
 func (r *Repo) ListVisible(ctx context.Context, tenantID, agentID uuid.UUID) ([]Reply, error) {
 	rows, err := r.Pool.Query(ctx, `
-		SELECT id, tenant_id, owner_agent_id, shortcut, title, body, channel
+		SELECT id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions
 		FROM canned_replies
 		WHERE tenant_id = $1 AND (owner_agent_id IS NULL OR owner_agent_id = $2)
 		ORDER BY owner_agent_id NULLS FIRST, shortcut ASC`,
@@ -106,11 +133,15 @@ func (r *Repo) ListVisible(ctx context.Context, tenantID, agentID uuid.UUID) ([]
 	defer rows.Close()
 	out := []Reply{}
 	for rows.Next() {
-		var rep Reply
+		var (
+			rep        Reply
+			actionsRaw []byte
+		)
 		if err := rows.Scan(&rep.ID, &rep.TenantID, &rep.OwnerAgentID,
-			&rep.Shortcut, &rep.Title, &rep.Body, &rep.Channel); err != nil {
+			&rep.Shortcut, &rep.Title, &rep.Body, &rep.Channel, &actionsRaw); err != nil {
 			return nil, err
 		}
+		rep.Actions = decodeActions(actionsRaw)
 		out = append(out, rep)
 	}
 	return out, rows.Err()
@@ -126,7 +157,8 @@ type UpdateParams struct {
 	Title       *string
 	Body        *string
 	Shortcut    *string
-	Channel     *string // empty string -> NULL (clear channel scope)
+	Channel     *string  // empty string -> NULL (clear channel scope)
+	Actions     *[]Action // nil = leave untouched; empty slice = clear
 }
 
 // Update applies the patch. Agents can only edit their own; admins
@@ -161,24 +193,43 @@ func (r *Repo) Update(ctx context.Context, p UpdateParams) (*Reply, error) {
 		ch = cur.Channel
 	}
 
+	// Actions: nil pointer leaves untouched (re-encode current rows),
+	// non-nil replaces with the supplied slice (empty = clear).
+	var actionsToWrite []Action
+	if p.Actions != nil {
+		if err := validateActions(*p.Actions); err != nil {
+			return nil, err
+		}
+		actionsToWrite = *p.Actions
+	} else {
+		actionsToWrite = cur.Actions
+	}
+	actionsJSON, err := marshalActions(actionsToWrite)
+	if err != nil {
+		return nil, err
+	}
+
 	var out Reply
+	var actionsRaw []byte
 	err = r.Pool.QueryRow(ctx, `
 		UPDATE canned_replies SET
 		  title    = COALESCE($3, title),
 		  body     = COALESCE($4, body),
 		  shortcut = COALESCE($5, shortcut),
-		  channel  = $6
+		  channel  = $6,
+		  actions  = $7
 		WHERE tenant_id = $1 AND id = $2
-		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel`,
-		p.TenantID, p.ID, p.Title, p.Body, p.Shortcut, ch,
+		RETURNING id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions`,
+		p.TenantID, p.ID, p.Title, p.Body, p.Shortcut, ch, actionsJSON,
 	).Scan(&out.ID, &out.TenantID, &out.OwnerAgentID, &out.Shortcut,
-		&out.Title, &out.Body, &out.Channel)
+		&out.Title, &out.Body, &out.Channel, &actionsRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil && strings.Contains(err.Error(), "SQLSTATE 23505") {
 		return nil, fmt.Errorf("%w: shortcut already exists for this owner", ErrInvalid)
 	}
+	out.Actions = decodeActions(actionsRaw)
 	return &out, err
 }
 
@@ -200,17 +251,21 @@ func (r *Repo) Delete(ctx context.Context, tenantID, id, actingAgent uuid.UUID, 
 }
 
 func (r *Repo) get(ctx context.Context, tenantID, id uuid.UUID) (*Reply, error) {
-	var rep Reply
+	var (
+		rep        Reply
+		actionsRaw []byte
+	)
 	err := r.Pool.QueryRow(ctx, `
-		SELECT id, tenant_id, owner_agent_id, shortcut, title, body, channel
+		SELECT id, tenant_id, owner_agent_id, shortcut, title, body, channel, actions
 		FROM canned_replies
 		WHERE tenant_id = $1 AND id = $2`,
 		tenantID, id).
 		Scan(&rep.ID, &rep.TenantID, &rep.OwnerAgentID, &rep.Shortcut,
-			&rep.Title, &rep.Body, &rep.Channel)
+			&rep.Title, &rep.Body, &rep.Channel, &actionsRaw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
+	rep.Actions = decodeActions(actionsRaw)
 	return &rep, err
 }
 
@@ -221,6 +276,68 @@ func validateShortcut(s string) error {
 			ErrInvalid)
 	}
 	return nil
+}
+
+// validateActions checks the macro action list at the boundary so
+// the DB only ever holds well-formed payloads. Unknown action types
+// are rejected -- forwards-compatibility lives in adding new types,
+// not in storing values nobody will execute.
+func validateActions(actions []Action) error {
+	for i, a := range actions {
+		switch a.Type {
+		case "set_state":
+			switch a.To {
+			case "open", "pending", "on_hold", "resolved", "closed", "reopened":
+			default:
+				return fmt.Errorf("%w: action[%d] set_state.to=%q invalid", ErrInvalid, i, a.To)
+			}
+		case "add_tag":
+			if !slugPatternBoundary(a.TagSlug) {
+				return fmt.Errorf("%w: action[%d] add_tag.tag_slug invalid", ErrInvalid, i)
+			}
+		case "assign":
+			if a.To == "me" || a.To == "unassign" {
+				continue
+			}
+			if _, err := uuid.Parse(a.To); err != nil {
+				return fmt.Errorf("%w: action[%d] assign.to must be me/unassign/uuid", ErrInvalid, i)
+			}
+		default:
+			return fmt.Errorf("%w: action[%d] unknown type %q", ErrInvalid, i, a.Type)
+		}
+	}
+	return nil
+}
+
+// slugPatternBoundary mirrors the tag package's slug rule without
+// taking a dependency on it; same lower_snake_case 1-32 chars.
+var slugRE = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
+
+func slugPatternBoundary(s string) bool { return slugRE.MatchString(s) }
+
+// marshalActions normalises a nil slice to '[]' so the DB never
+// holds NULL even though the column is NOT NULL DEFAULT '[]'.
+func marshalActions(actions []Action) ([]byte, error) {
+	if actions == nil {
+		actions = []Action{}
+	}
+	return json.Marshal(actions)
+}
+
+// decodeActions is the inverse; empty/invalid JSON falls back to an
+// empty slice so the caller never has to nil-check.
+func decodeActions(raw []byte) []Action {
+	if len(raw) == 0 {
+		return []Action{}
+	}
+	var out []Action
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return []Action{}
+	}
+	if out == nil {
+		out = []Action{}
+	}
+	return out
 }
 
 func validChannel(s string) bool {

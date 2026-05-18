@@ -783,6 +783,46 @@
           }
         },
         {
+          "name": "Create macro — resolve_thanks (Carol — admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortcut\": \"resolve_tag_refund\",\n  \"title\": \"Tag as refund and resolve\",\n  \"body\": \"Thanks -- I've logged this as a refund request and we'll be in touch shortly.\",\n  \"scope\": \"tenant\",\n  \"actions\": [\n    { \"type\": \"add_tag\", \"tag_slug\": \"refund\" },\n    { \"type\": \"set_state\", \"to\": \"resolved\" }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Macro: actions array runs after the reply is sent. Order is preserved (tag added before state change here)."
+          }
+        },
+        {
+          "name": "Invalid action — expect 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortcut\": \"bad_macro\",\n  \"title\": \"x\",\n  \"body\": \"x\",\n  \"scope\": \"tenant\",\n  \"actions\": [{\"type\":\"set_state\",\"to\":\"banana\"}]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Unknown set_state target is rejected at the boundary so the DB only holds well-formed macros."
+          }
+        },
+        {
           "name": "Invalid shortcut — expect 400",
           "request": {
             "method": "POST",

@@ -48,10 +48,11 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Shortcut string  `json:"shortcut"`
-		Title    string  `json:"title"`
-		Body     string  `json:"body"`
-		Channel  *string `json:"channel,omitempty"`
+		Shortcut string   `json:"shortcut"`
+		Title    string   `json:"title"`
+		Body     string   `json:"body"`
+		Channel  *string  `json:"channel,omitempty"`
+		Actions  []Action `json:"actions,omitempty"`
 		// scope = "personal" (default) or "tenant" (admin-only).
 		Scope string `json:"scope,omitempty"`
 	}
@@ -70,6 +71,7 @@ func (a *API) create(w http.ResponseWriter, r *http.Request) {
 	rep, err := a.Repo.Create(r.Context(), CreateParams{
 		TenantID: id.TenantID, OwnerAgentID: owner,
 		Shortcut: body.Shortcut, Title: body.Title, Body: body.Body, Channel: body.Channel,
+		Actions: body.Actions,
 	})
 	switch {
 	case errors.Is(err, ErrInvalid):
@@ -94,10 +96,11 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Title    *string `json:"title,omitempty"`
-		Body     *string `json:"body,omitempty"`
-		Shortcut *string `json:"shortcut,omitempty"`
-		Channel  *string `json:"channel,omitempty"`
+		Title    *string    `json:"title,omitempty"`
+		Body     *string    `json:"body,omitempty"`
+		Shortcut *string    `json:"shortcut,omitempty"`
+		Channel  *string    `json:"channel,omitempty"`
+		Actions  *[]Action  `json:"actions,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid json")
@@ -107,6 +110,7 @@ func (a *API) update(w http.ResponseWriter, r *http.Request) {
 		TenantID: id.TenantID, ID: repID,
 		ActingAgent: id.AgentID, ActingAdmin: id.HasRole(auth.RoleAdmin),
 		Title: body.Title, Body: body.Body, Shortcut: body.Shortcut, Channel: body.Channel,
+		Actions: body.Actions,
 	})
 	switch {
 	case errors.Is(err, ErrNotFound):

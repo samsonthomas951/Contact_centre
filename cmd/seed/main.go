@@ -337,22 +337,28 @@ func upsertCannedReplies(ctx context.Context, tx pgx.Tx) error {
 		Shortcut string
 		Title    string
 		Body     string
+		// Optional macro actions; nil = plain canned reply.
+		Actions string // raw JSON literal
 	}
 	ada := DemoAgentAdaID
 	rows := []row{
-		{nil, "thanks", "Thanks", "Thank you for reaching out -- I'll get back to you shortly with an update."},
-		{nil, "refund_status", "Refund — checking", "Hi! I've raised your refund query with our payments team and will follow up within 24 hours."},
-		{nil, "out_of_stock", "Out of stock", "Unfortunately that item is currently out of stock. We expect a restock within 7-10 days; would you like us to notify you when it arrives?"},
-		{&ada, "my_signoff", "My sign-off (Ada)", "All the best,\nAda"},
+		{nil, "thanks", "Thanks", "Thank you for reaching out -- I'll get back to you shortly with an update.", "[]"},
+		{nil, "refund_status", "Refund — checking", "Hi! I've raised your refund query with our payments team and will follow up within 24 hours.", `[{"type":"add_tag","tag_slug":"refund"}]`},
+		{nil, "out_of_stock", "Out of stock", "Unfortunately that item is currently out of stock. We expect a restock within 7-10 days; would you like us to notify you when it arrives?", "[]"},
+		// Macro: send the thank-you AND mark the ticket resolved.
+		{nil, "resolve_thanks", "Resolve with thanks (macro)", "Glad we could help! Marking this as resolved -- feel free to reopen if anything else comes up.", `[{"type":"set_state","to":"resolved"}]`},
+		{&ada, "my_signoff", "My sign-off (Ada)", "All the best,\nAda", "[]"},
 	}
 	for _, r := range rows {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO canned_replies
-			  (tenant_id, owner_agent_id, shortcut, title, body)
-			VALUES ($1, $2, $3, $4, $5)
+			  (tenant_id, owner_agent_id, shortcut, title, body, actions)
+			VALUES ($1, $2, $3, $4, $5, $6::jsonb)
 			ON CONFLICT (tenant_id, owner_agent_id, shortcut) DO UPDATE
-			  SET title = EXCLUDED.title, body = EXCLUDED.body`,
-			DemoTenantID, r.Owner, r.Shortcut, r.Title, r.Body); err != nil {
+			  SET title   = EXCLUDED.title,
+			      body    = EXCLUDED.body,
+			      actions = EXCLUDED.actions`,
+			DemoTenantID, r.Owner, r.Shortcut, r.Title, r.Body, r.Actions); err != nil {
 			return fmt.Errorf("seed: canned reply %s: %w", r.Shortcut, err)
 		}
 	}

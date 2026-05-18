@@ -8,6 +8,7 @@ import { TicketHeader } from "@/components/TicketHeader";
 import { CustomerSidebar } from "@/components/CustomerSidebar";
 import { TicketShortcuts } from "@/components/TicketShortcuts";
 import { TicketTags } from "@/components/TicketTags";
+import { auth } from "@/lib/auth";
 import { loadCannedReplies, loadTags } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -42,6 +43,13 @@ export default async function TicketPage({
 }) {
   const { id } = await params;
 
+  // meId is needed by macro actions ("assign: me"). Demo bearer
+  // tokens carry the agent id in the second segment; in OIDC prod
+  // this would come from id_token claims.
+  const session = await auth();
+  const tok = session?.accessToken ?? "";
+  const meId = tok.startsWith("demo:") ? tok.split(":")[1] ?? "" : "";
+
   // Start all three fetches NOW (async-parallel). We only await the
   // ticket promise + canned replies (composer needs them at first
   // paint); the messages promise is handed to a Suspense boundary
@@ -74,7 +82,7 @@ export default async function TicketPage({
             <MessageThreadAsync messagesPromise={messagesPromise} />
           </Suspense>
         </div>
-        <Composer ticketId={id} cannedReplies={cannedReplies} />
+        <Composer ticketId={id} cannedReplies={cannedReplies} meId={meId} />
         <TicketShortcuts ticketId={id} currentState={ticket.state} />
       </div>
       {/* Customer profile column. Suspended so a slow customer fetch

@@ -10,6 +10,7 @@ export interface Reply {
   body: string;
   channel?: string | null;
   owner_agent_id?: string | null;
+  actions?: { type: string; to?: string; tag_slug?: string }[];
 }
 
 export function ReplyRow({ r, canDelete }: { r: Reply; canDelete: boolean }) {
@@ -31,6 +32,24 @@ export function ReplyRow({ r, canDelete }: { r: Reply; canDelete: boolean }) {
             <span className="text-sm font-medium text-slate-900">{r.title}</span>
             {!r.owner_agent_id && (
               <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] text-emerald-800">tenant-shared</span>
+            )}
+            {r.actions && r.actions.length > 0 && (
+              <span
+                className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] text-purple-800"
+                title={r.actions
+                  .map((a) =>
+                    a.type === "set_state"
+                      ? `state→${a.to}`
+                      : a.type === "add_tag"
+                        ? `+#${a.tag_slug}`
+                        : a.type === "assign"
+                          ? `assign→${a.to}`
+                          : a.type,
+                  )
+                  .join(", ")}
+              >
+                macro · {r.actions.length}
+              </span>
             )}
             {r.channel && (
               <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] uppercase text-slate-600">

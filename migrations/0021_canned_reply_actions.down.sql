@@ -1,0 +1,3 @@
+BEGIN;
+ALTER TABLE canned_replies DROP COLUMN IF EXISTS actions;
+COMMIT;

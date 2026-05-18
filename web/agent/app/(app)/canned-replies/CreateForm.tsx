@@ -48,6 +48,42 @@ export function CreateForm({ canShare }: { canShare: boolean }) {
           className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm" />
       </div>
 
+      <fieldset className="mt-4 rounded border border-dashed border-slate-300 p-3">
+        <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Macro actions <span className="font-normal lowercase">(optional)</span>
+        </legend>
+        <p className="text-xs text-slate-500">
+          Run automatically after the reply is sent. Leave blank for a plain canned reply.
+        </p>
+        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+          <Field label="Set state" hint="Move the ticket on send.">
+            <select name="macro_state" className="w-full rounded border border-slate-300 px-3 py-1.5 text-sm">
+              <option value="">(no change)</option>
+              <option value="open">open</option>
+              <option value="pending">pending</option>
+              <option value="on_hold">on_hold</option>
+              <option value="resolved">resolved</option>
+              <option value="closed">closed</option>
+            </select>
+          </Field>
+          <Field label="Add tag" hint="Slug (e.g. refund).">
+            <input
+              name="macro_tag"
+              pattern="^([a-z][a-z0-9_]{0,31})?$"
+              placeholder="refund"
+              className="w-full rounded border border-slate-300 px-3 py-1.5 text-sm font-mono"
+            />
+          </Field>
+          <Field label="Assign" hint="'me', 'unassign', or agent uuid.">
+            <input
+              name="macro_assign"
+              placeholder=""
+              className="w-full rounded border border-slate-300 px-3 py-1.5 text-sm font-mono"
+            />
+          </Field>
+        </div>
+      </fieldset>
+
       {state?.error && <p className="mt-3 text-sm text-red-600">{state.error}</p>}
       {state?.ok && <p className="mt-3 text-sm text-emerald-700">Saved.</p>}
 

@@ -2,7 +2,14 @@
 
 import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { sendMessage, uploadAttachment, type UploadedDoc, type CannedReply } from "@/app/(app)/tickets/[id]/actions";
+import {
+  sendMessage,
+  uploadAttachment,
+  runMacroActions,
+  type UploadedDoc,
+  type CannedReply,
+  type CannedReplyAction,
+} from "@/app/(app)/tickets/[id]/actions";
 
 // Client component for the reply box. The actual POST is a server
 // action so the bearer token never leaves the server. Attachments
@@ -31,11 +38,22 @@ interface Pending {
 // beginning of the buffer so URLs like example.com/foo don't open it.
 const TRIGGER_RE = /(?:^|\s)\/([a-z][a-z0-9_]{0,31})$/i;
 
-export function Composer({ ticketId, cannedReplies }: { ticketId: string; cannedReplies: CannedReply[] }) {
+export function Composer({
+  ticketId,
+  cannedReplies,
+  meId,
+}: {
+  ticketId: string;
+  cannedReplies: CannedReply[];
+  meId: string;
+}) {
   const [body, setBody] = useState("");
   const [direction, setDirection] = useState<"out" | "note">("out");
   const [pending, startTransition] = useTransition();
   const [attachments, setAttachments] = useState<Pending[]>([]);
+  // Pending macro: when the inserted reply carries actions, they fire
+  // after the message send succeeds. Cleared after each submit.
+  const pendingActions = useRef<CannedReplyAction[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
@@ -88,6 +106,11 @@ export function Composer({ ticketId, cannedReplies }: { ticketId: string; canned
     const next = before + r.body + after;
     setBody(next);
     setPickerOpen(false);
+    // If this reply is a macro (carries actions), stash them so they
+    // fire after the next successful send. Single-step inserts also
+    // overwrite any previously stashed actions -- only the most
+    // recently picked macro applies, matching agent intent.
+    pendingActions.current = r.actions ?? [];
     // Move the caret to the end of the inserted body on the next tick
     // so React has applied the new value.
     queueMicrotask(() => {
@@ -106,6 +129,8 @@ export function Composer({ ticketId, cannedReplies }: { ticketId: string; canned
 
     setBody("");
     setAttachments([]);
+    const actions = pendingActions.current;
+    pendingActions.current = [];
     startTransition(async () => {
       try {
         await sendMessage(ticketId, {
@@ -113,6 +138,12 @@ export function Composer({ ticketId, cannedReplies }: { ticketId: string; canned
           body: trimmed || "(attachment)",
           attachments: uploaded,
         });
+        // Macro side-effects fire after the message lands. We do
+        // not refresh between them -- the final revalidatePath
+        // inside runMacroActions handles it.
+        if (actions.length > 0) {
+          await runMacroActions(ticketId, actions, meId);
+        }
         router.refresh();
       } catch (e) {
         setBody(trimmed); // restore so the agent can retry
@@ -307,6 +338,19 @@ function SlashPicker({
           <div className="flex items-baseline gap-2">
             <code className={i === activeIndex ? "text-white" : "text-slate-500"}>/{r.shortcut}</code>
             <span className="font-medium">{r.title}</span>
+            {r.actions && r.actions.length > 0 && (
+              <span
+                className={
+                  "rounded-full px-1.5 py-0 text-[9px] uppercase " +
+                  (i === activeIndex
+                    ? "bg-white/20 text-white"
+                    : "bg-purple-100 text-purple-700")
+                }
+                title={macroSummary(r.actions)}
+              >
+                macro
+              </span>
+            )}
             {!r.owner_agent_id && (
               <span className={"ml-auto text-[10px] " + (i === activeIndex ? "text-blue-100" : "text-slate-400")}>
                 shared
@@ -320,6 +364,18 @@ function SlashPicker({
       ))}
     </ul>
   );
+}
+
+// macroSummary builds a human hint for the picker tooltip.
+function macroSummary(actions: CannedReplyAction[]): string {
+  return actions
+    .map((a) => {
+      if (a.type === "set_state") return `state→${a.to}`;
+      if (a.type === "add_tag") return `+#${a.tag_slug}`;
+      if (a.type === "assign") return `assign→${a.to}`;
+      return a.type;
+    })
+    .join(", ");
 }
 
 function AttachmentChip({ a, onRemove }: { a: Pending; onRemove: () => void }) {
