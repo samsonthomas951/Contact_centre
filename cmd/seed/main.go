@@ -86,6 +86,9 @@ func run() error {
 	if err := upsertEmailMailbox(ctx, tx); err != nil {
 		return err
 	}
+	if err := upsertCannedReplies(ctx, tx); err != nil {
+		return err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -320,6 +323,37 @@ func upsertEmailMailbox(ctx context.Context, tx pgx.Tx) error {
 		      active                 = TRUE`,
 		DemoTenantID, smtpCT, smtpDek, hookCT, hookDek)
 	return err
+}
+
+// upsertCannedReplies seeds three tenant-shared replies + one
+// personal-to-Ada so the composer's "/" picker has something to show
+// out of the box.
+func upsertCannedReplies(ctx context.Context, tx pgx.Tx) error {
+	type row struct {
+		Owner    *uuid.UUID
+		Shortcut string
+		Title    string
+		Body     string
+	}
+	ada := DemoAgentAdaID
+	rows := []row{
+		{nil, "thanks", "Thanks", "Thank you for reaching out -- I'll get back to you shortly with an update."},
+		{nil, "refund_status", "Refund — checking", "Hi! I've raised your refund query with our payments team and will follow up within 24 hours."},
+		{nil, "out_of_stock", "Out of stock", "Unfortunately that item is currently out of stock. We expect a restock within 7-10 days; would you like us to notify you when it arrives?"},
+		{&ada, "my_signoff", "My sign-off (Ada)", "All the best,\nAda"},
+	}
+	for _, r := range rows {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO canned_replies
+			  (tenant_id, owner_agent_id, shortcut, title, body)
+			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (tenant_id, owner_agent_id, shortcut) DO UPDATE
+			  SET title = EXCLUDED.title, body = EXCLUDED.body`,
+			DemoTenantID, r.Owner, r.Shortcut, r.Title, r.Body); err != nil {
+			return fmt.Errorf("seed: canned reply %s: %w", r.Shortcut, err)
+		}
+	}
+	return nil
 }
 
 func firstName(full string) string {

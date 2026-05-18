@@ -40,3 +40,28 @@ export async function uploadAttachment(
   form.set("ticket_id", ticketId);
   return gatewayUpload<UploadedDoc>("/v1/documents", form);
 }
+
+// CannedReply mirrors the gateway JSON. Owner is null for tenant-
+// shared; the picker uses it only for a "(yours)" badge.
+export interface CannedReply {
+  id: string;
+  shortcut: string;
+  title: string;
+  body: string;
+  channel?: string | null;
+  owner_agent_id?: string | null;
+}
+
+// loadCannedReplies returns the visible set for the calling agent.
+// Pulled once per ticket page render; the composer then filters
+// client-side as the agent types after "/".
+export async function loadCannedReplies(): Promise<CannedReply[]> {
+  try {
+    const res = await (await import("@/lib/api")).gatewayJSON<{
+      replies: CannedReply[];
+    }>("/v1/canned-replies/", { cache: "no-store" });
+    return res.replies ?? [];
+  } catch {
+    return [];
+  }
+}

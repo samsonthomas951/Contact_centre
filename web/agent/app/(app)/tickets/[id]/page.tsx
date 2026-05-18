@@ -6,6 +6,7 @@ import { Composer } from "@/components/Composer";
 import { MessageThread } from "@/components/MessageThread";
 import { TicketHeader } from "@/components/TicketHeader";
 import { CustomerSidebar } from "@/components/CustomerSidebar";
+import { loadCannedReplies } from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -39,14 +40,18 @@ export default async function TicketPage({
 }) {
   const { id } = await params;
 
-  // Start both fetches NOW (async-parallel). We only await the ticket
-  // promise immediately; the messages promise is handed to a Suspense
-  // boundary so the header can paint while the thread is still in
-  // flight.
+  // Start all three fetches NOW (async-parallel). We only await the
+  // ticket promise + canned replies (composer needs them at first
+  // paint); the messages promise is handed to a Suspense boundary
+  // so the header can paint while the thread is still in flight.
   const ticketPromise = loadTicket(id);
   const messagesPromise = loadMessages(id);
+  const cannedRepliesPromise = loadCannedReplies();
 
-  const ticket = await ticketPromise;
+  const [ticket, cannedReplies] = await Promise.all([
+    ticketPromise,
+    cannedRepliesPromise,
+  ]);
 
   return (
     <div className="flex h-screen">
@@ -58,7 +63,7 @@ export default async function TicketPage({
             <MessageThreadAsync messagesPromise={messagesPromise} />
           </Suspense>
         </div>
-        <Composer ticketId={id} />
+        <Composer ticketId={id} cannedReplies={cannedReplies} />
       </div>
       {/* Customer profile column. Suspended so a slow customer fetch
           doesn't delay the thread paint. */}

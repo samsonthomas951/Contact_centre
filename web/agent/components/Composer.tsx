@@ -1,14 +1,18 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { sendMessage, uploadAttachment, type UploadedDoc } from "@/app/(app)/tickets/[id]/actions";
+import { sendMessage, uploadAttachment, type UploadedDoc, type CannedReply } from "@/app/(app)/tickets/[id]/actions";
 
 // Client component for the reply box. The actual POST is a server
 // action so the bearer token never leaves the server. Attachments
 // upload to /v1/documents via uploadAttachment first; the returned
 // doc UUIDs ride on the subsequent sendMessage so messages.attachments
 // stores the linkage.
+//
+// Saved replies: typing "/" at the start of the textarea (or after a
+// whitespace boundary) opens a picker filtered by the partial shortcut
+// the agent's typing. Arrow keys navigate; Enter inserts; Esc closes.
 
 interface Pending {
   // Local-only key so React reconciles the chip during the upload
@@ -21,13 +25,78 @@ interface Pending {
   doc?: UploadedDoc;
 }
 
-export function Composer({ ticketId }: { ticketId: string }) {
+// Match a "/word" trigger immediately before the cursor. We allow
+// lower-snake-case (matching shortcutPattern in internal/cannedreply
+// repo.go). The trigger must follow a whitespace/newline OR the
+// beginning of the buffer so URLs like example.com/foo don't open it.
+const TRIGGER_RE = /(?:^|\s)\/([a-z][a-z0-9_]{0,31})$/i;
+
+export function Composer({ ticketId, cannedReplies }: { ticketId: string; cannedReplies: CannedReply[] }) {
   const [body, setBody] = useState("");
   const [direction, setDirection] = useState<"out" | "note">("out");
   const [pending, startTransition] = useTransition();
   const [attachments, setAttachments] = useState<Pending[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const router = useRouter();
+
+  // Slash-picker state. pickerQuery is the partial shortcut after
+  // "/"; pickerIndex is the highlighted row; triggerStart is the
+  // textarea offset of the "/" itself so insertion can replace the
+  // exact range.
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerQuery, setPickerQuery] = useState("");
+  const [pickerIndex, setPickerIndex] = useState(0);
+  const [triggerStart, setTriggerStart] = useState(-1);
+
+  // Filter every render -- cannedReplies is small enough (<<100 rows)
+  // that a useMemo is overkill, but the dependency keeps the linter
+  // honest. Match against shortcut OR title for forgiving prefix.
+  const pickerHits = useMemo(() => {
+    if (!pickerOpen) return [];
+    const q = pickerQuery.toLowerCase();
+    const ranked = cannedReplies.filter(
+      (r) => r.shortcut.startsWith(q) || r.title.toLowerCase().includes(q),
+    );
+    return ranked.slice(0, 8);
+  }, [cannedReplies, pickerOpen, pickerQuery]);
+
+  // detectTrigger inspects the body + caret position to decide if a
+  // "/foo" partial is being typed. Called from onChange so the picker
+  // reacts to every keystroke, not just "/" itself (the agent may
+  // also paste or arrow into a /foo region).
+  const detectTrigger = (text: string, caret: number) => {
+    const head = text.slice(0, caret);
+    const m = TRIGGER_RE.exec(head);
+    if (!m) {
+      if (pickerOpen) setPickerOpen(false);
+      return;
+    }
+    const slash = head.lastIndexOf("/", caret);
+    setTriggerStart(slash);
+    setPickerQuery(m[1]);
+    setPickerIndex(0);
+    setPickerOpen(true);
+  };
+
+  const insertReply = (r: CannedReply) => {
+    if (triggerStart < 0 || !textareaRef.current) return;
+    const ta = textareaRef.current;
+    const caret = ta.selectionStart;
+    const before = body.slice(0, triggerStart);
+    const after = body.slice(caret);
+    const next = before + r.body + after;
+    setBody(next);
+    setPickerOpen(false);
+    // Move the caret to the end of the inserted body on the next tick
+    // so React has applied the new value.
+    queueMicrotask(() => {
+      if (!textareaRef.current) return;
+      const pos = before.length + r.body.length;
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(pos, pos);
+    });
+  };
 
   const submit = () => {
     const trimmed = body.trim();
@@ -135,20 +204,55 @@ export function Composer({ ticketId }: { ticketId: string }) {
           className="hidden"
           onChange={(e) => onFiles(e.target.files)}
         />
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          rows={2}
-          placeholder={direction === "note" ? "Internal note..." : "Reply to customer..."}
-          className="flex-1 resize-none rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
-          disabled={pending}
-        />
+        <div className="relative flex-1">
+          {pickerOpen && pickerHits.length > 0 && (
+            <SlashPicker
+              hits={pickerHits}
+              activeIndex={pickerIndex}
+              onPick={insertReply}
+            />
+          )}
+          <textarea
+            ref={textareaRef}
+            value={body}
+            onChange={(e) => {
+              setBody(e.target.value);
+              detectTrigger(e.target.value, e.target.selectionStart);
+            }}
+            onKeyDown={(e) => {
+              if (pickerOpen && pickerHits.length > 0) {
+                if (e.key === "ArrowDown") {
+                  e.preventDefault();
+                  setPickerIndex((i) => (i + 1) % pickerHits.length);
+                  return;
+                }
+                if (e.key === "ArrowUp") {
+                  e.preventDefault();
+                  setPickerIndex((i) => (i - 1 + pickerHits.length) % pickerHits.length);
+                  return;
+                }
+                if (e.key === "Enter" && !(e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  insertReply(pickerHits[pickerIndex]);
+                  return;
+                }
+                if (e.key === "Escape" || e.key === "Tab") {
+                  e.preventDefault();
+                  setPickerOpen(false);
+                  return;
+                }
+              }
+              if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            rows={2}
+            placeholder={direction === "note" ? "Internal note..." : "Reply to customer... (try / for saved replies)"}
+            className="w-full resize-none rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
+            disabled={pending}
+          />
+        </div>
         <button
           type="submit"
           disabled={sendDisabled}
@@ -162,6 +266,59 @@ export function Composer({ ticketId }: { ticketId: string }) {
 }
 
 // Module-scope per rerender-no-inline-components.
+function SlashPicker({
+  hits,
+  activeIndex,
+  onPick,
+}: {
+  hits: CannedReply[];
+  activeIndex: number;
+  onPick: (r: CannedReply) => void;
+}) {
+  return (
+    <ul
+      // Position above the textarea so the picker grows upward (the
+      // composer is anchored at the bottom of the page).
+      className="absolute bottom-full left-0 right-0 mb-1 max-h-64 overflow-y-auto rounded border border-slate-200 bg-white text-sm shadow-lg"
+      role="listbox"
+    >
+      {hits.map((r, i) => (
+        <li
+          key={r.id}
+          role="option"
+          aria-selected={i === activeIndex}
+          // onMouseDown rather than onClick so the textarea doesn't
+          // lose focus (and the picker doesn't close) before the
+          // insertion runs.
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onPick(r);
+          }}
+          className={
+            "cursor-pointer px-3 py-1.5 " +
+            (i === activeIndex
+              ? "bg-brand text-white"
+              : "text-slate-800 hover:bg-slate-50")
+          }
+        >
+          <div className="flex items-baseline gap-2">
+            <code className={i === activeIndex ? "text-white" : "text-slate-500"}>/{r.shortcut}</code>
+            <span className="font-medium">{r.title}</span>
+            {!r.owner_agent_id && (
+              <span className={"ml-auto text-[10px] " + (i === activeIndex ? "text-blue-100" : "text-slate-400")}>
+                shared
+              </span>
+            )}
+          </div>
+          <div className={"truncate text-xs " + (i === activeIndex ? "text-blue-100" : "text-slate-500")}>
+            {r.body.split("\n")[0]}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function AttachmentChip({ a, onRemove }: { a: Pending; onRemove: () => void }) {
   return (
     <li

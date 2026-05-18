@@ -38,6 +38,7 @@ import (
 
 	"github.com/samsonthomas951/contact-centre/internal/analytics"
 	"github.com/samsonthomas951/contact-centre/internal/auth"
+	"github.com/samsonthomas951/contact-centre/internal/cannedreply"
 	"github.com/samsonthomas951/contact-centre/internal/connector/email"
 	"github.com/samsonthomas951/contact-centre/internal/connector/facebook"
 	"github.com/samsonthomas951/contact-centre/internal/connector/instagram"
@@ -370,8 +371,9 @@ func run() error {
 		CSATPublic: &csat.PublicAPI{Repo: csat.NewRepo(pool)},
 		Email:      emailWebhook,
 		EmailStore: emailStore,
-		Docs:       docsAPI,
-		Customer:   &customer.API{Repo: customer.NewRepo(pool)},
+		Docs:         docsAPI,
+		Customer:     &customer.API{Repo: customer.NewRepo(pool)},
+		CannedReply:  &cannedreply.API{Repo: cannedreply.NewRepo(pool)},
 	})
 	return httpserver.Run(ctx, httpCfg, r)
 }
@@ -408,18 +410,19 @@ type routerDeps struct {
 	DSR        *dsr.API
 	CSATPublic *csat.PublicAPI
 	Meta       *meta.Handler
-	Email      *email.WebhookHandler
-	EmailStore *email.MailboxStore
-	Customer   *customer.API
+	Email       *email.WebhookHandler
+	EmailStore  *email.MailboxStore
+	Customer    *customer.API
+	CannedReply *cannedreply.API
 }
 
 // newRouter builds the chi tree. Pulled out of run() so it can be
 // exercised in tests without touching the network.
 func newRouter(d routerDeps) http.Handler {
-	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust :=
+	v, tr, p, fb, fbo, x, wa, ig, wg, vc, docs, sup, ana, onb, ds, cs, mh, em, es, cust, cr :=
 		d.Verifier, d.Tickets, d.Pinger, d.FB, d.FBOAuth, d.X, d.WA, d.IG, d.Widget,
 		d.Voice, d.Docs, d.Supervisor, d.Analytics, d.Onboarding, d.DSR, d.CSATPublic, d.Meta,
-		d.Email, d.EmailStore, d.Customer
+		d.Email, d.EmailStore, d.Customer, d.CannedReply
 	r := chi.NewRouter()
 
 	// Universal middleware: panic recovery, request id, correlation,
@@ -587,6 +590,9 @@ func newRouter(d routerDeps) http.Handler {
 		}
 		if cust != nil {
 			r.Mount("/customers", cust.Routes())
+		}
+		if cr != nil {
+			r.Mount("/canned-replies", cr.Routes())
 		}
 		if es != nil {
 			// Email mailbox CRUD lives under /v1/onboarding/mailboxes

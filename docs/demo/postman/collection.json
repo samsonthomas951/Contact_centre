@@ -708,6 +708,103 @@
       ]
     },
     {
+      "name": "8d. Saved replies (any role lists; admin shares)",
+      "item": [
+        {
+          "name": "List visible (Ada — agent)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{ada_bearer}}" }],
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Returns this agent's visible set: tenant-shared + her personal. Seed inserts three shared (thanks / refund_status / out_of_stock) plus Ada's personal my_signoff."
+          }
+        },
+        {
+          "name": "Create personal (Ada)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortcut\": \"ada_followup\",\n  \"title\": \"Follow-up reminder\",\n  \"body\": \"Just checking in -- did the workaround help?\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Personal scope (default). Owner = the calling agent."
+          }
+        },
+        {
+          "name": "Create tenant-shared (Carol — admin)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{carol_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortcut\": \"escalate\",\n  \"title\": \"Escalate\",\n  \"body\": \"This has been escalated -- expect a call within 4 hours.\",\n  \"scope\": \"tenant\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            }
+          }
+        },
+        {
+          "name": "Bob (supervisor) tries to share — expect 403",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{bob_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"shortcut\": \"bob_shared\",\n  \"title\": \"x\",\n  \"body\": \"x\",\n  \"scope\": \"tenant\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Negative test. Only role=admin can create tenant-shared replies; supervisor gets 403."
+          }
+        },
+        {
+          "name": "Invalid shortcut — expect 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"shortcut\": \"Bad-One!\", \"title\": \"x\", \"body\": \"x\" }"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/canned-replies/",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "canned-replies", ""]
+            },
+            "description": "Shortcut must match ^[a-z][a-z0-9_]{0,31}$ — rejected at the boundary."
+          }
+        }
+      ]
+    },
+    {
       "name": "8c. Email (Carol — admin; webhook public)",
       "item": [
         {
