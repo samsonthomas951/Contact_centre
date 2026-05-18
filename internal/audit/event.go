@@ -70,11 +70,11 @@ func computeHash(e *Event) []byte {
 	h := sha256.New()
 
 	var seq [8]byte
-	binary.BigEndian.PutUint64(seq[:], uint64(e.Seq))
+	binary.BigEndian.PutUint64(seq[:], uint64(e.Seq)) //nolint:gosec // Seq is a monotonic non-negative counter
 	h.Write(seq[:])
 
 	var ts [8]byte
-	binary.BigEndian.PutUint64(ts[:], uint64(e.Ts.UnixNano()))
+	binary.BigEndian.PutUint64(ts[:], uint64(e.Ts.UnixNano())) //nolint:gosec // UnixNano is non-negative for any valid time
 	h.Write(ts[:])
 
 	h.Write(e.TenantID[:])

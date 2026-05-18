@@ -24,7 +24,7 @@ const Header = "X-Correlation-Id"
 // 32 hex characters that sort lexicographically by time.
 func New() string {
 	var b [16]byte
-	ms := uint64(time.Now().UnixMilli())
+	ms := uint64(time.Now().UnixMilli()) //nolint:gosec // UnixMilli is non-negative
 	for i := range 8 {
 		b[i] = byte(ms >> (56 - 8*i))
 	}

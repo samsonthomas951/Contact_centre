@@ -65,7 +65,7 @@ func (h *AgentSocketHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // websocket.Accept already wrote a response
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	// Per-socket context lives only as long as the connection. Cancelling
 	// it tears down every Hub subscription we registered.

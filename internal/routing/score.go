@@ -94,15 +94,15 @@ func freshnessOf(last, now time.Time) float64 {
 	if last.IsZero() {
 		return 1.0
 	}
-	const cap = 30 * time.Minute
+	const window = 30 * time.Minute
 	d := now.Sub(last)
 	if d <= 0 {
 		return 0
 	}
-	if d >= cap {
+	if d >= window {
 		return 1.0
 	}
-	return float64(d) / float64(cap)
+	return float64(d) / float64(window)
 }
 
 // Pick returns the highest-scoring eligible agent for the ticket, or

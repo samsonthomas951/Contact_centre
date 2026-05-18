@@ -203,10 +203,7 @@ func (e *Error) IsTransient() bool {
 	case 4, 17, 32, 613:
 		return true
 	}
-	if e.Status >= 500 {
-		return true
-	}
-	return false
+	return e.Status >= 500
 }
 
 func (s *Sender) recordCost(pageID string, ok bool) {

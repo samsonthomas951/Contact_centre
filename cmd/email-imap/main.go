@@ -83,7 +83,7 @@ func run() error {
 		JS:    js,
 		Cfg: email.PollerConfig{
 			Interval:  time.Duration(myCfg.IntervalSecs) * time.Second,
-			BatchSize: uint32(myCfg.BatchSize),
+			BatchSize: uint32(myCfg.BatchSize), //nolint:gosec // BatchSize is operator-configured and small
 		},
 	}
 	slog.InfoContext(ctx, "email-imap: starting",

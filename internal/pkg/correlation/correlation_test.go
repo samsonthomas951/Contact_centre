@@ -29,7 +29,7 @@ func TestContextRoundtrip(t *testing.T) {
 
 func TestMiddleware_EchoesInbound(t *testing.T) {
 	var seen string
-	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h := Middleware(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = FromContext(r.Context())
 	}))
 
@@ -47,7 +47,7 @@ func TestMiddleware_EchoesInbound(t *testing.T) {
 }
 
 func TestMiddleware_GeneratesWhenAbsent(t *testing.T) {
-	h := Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	h := Middleware(http.HandlerFunc(func(_ http.ResponseWriter, _ *http.Request) {}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

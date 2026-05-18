@@ -79,7 +79,7 @@ func (s *ClamAVScanner) Scan(ctx context.Context, r io.Reader) (Verdict, error) 
 		n, rerr := r.Read(buf)
 		if n > 0 {
 			var hdr [4]byte
-			binary.BigEndian.PutUint32(hdr[:], uint32(n))
+			binary.BigEndian.PutUint32(hdr[:], uint32(n)) //nolint:gosec // n is bounded by buf len (64 KiB)
 			if _, err := conn.Write(hdr[:]); err != nil {
 				return Verdict{}, fmt.Errorf("document: clamav write chunk header: %w", err)
 			}

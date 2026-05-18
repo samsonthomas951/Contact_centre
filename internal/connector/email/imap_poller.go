@@ -121,7 +121,7 @@ func (p *Poller) pollOne(ctx context.Context, mb Mailbox, batch uint32) error {
 	}
 
 	// Fetch every UID strictly greater than our checkpoint.
-	since := uint32(mb.IMAPLastSeenUID) + 1
+	since := uint32(mb.IMAPLastSeenUID) + 1 //nolint:gosec // IMAP UIDs are 32-bit non-negative
 	seqSet := new(imap.SeqSet)
 	seqSet.AddRange(since, 0) // 0 = "max"
 
@@ -134,7 +134,7 @@ func (p *Poller) pollOne(ctx context.Context, mb Mailbox, batch uint32) error {
 		doneCh <- c.UidFetch(seqSet, items, msgCh)
 	}()
 
-	highestSeen := uint32(mb.IMAPLastSeenUID)
+	highestSeen := uint32(mb.IMAPLastSeenUID) //nolint:gosec // IMAP UIDs are 32-bit non-negative
 	processed := 0
 	for m := range msgCh {
 		if m.Uid > highestSeen {
@@ -148,7 +148,7 @@ func (p *Poller) pollOne(ctx context.Context, mb Mailbox, batch uint32) error {
 			continue
 		}
 		processed++
-		if uint32(processed) >= batch {
+		if uint32(processed) >= batch { //nolint:gosec // processed is bounded by batch (uint32)
 			break
 		}
 	}
@@ -157,7 +157,7 @@ func (p *Poller) pollOne(ctx context.Context, mb Mailbox, batch uint32) error {
 		// we did process is real progress.
 		slog.WarnContext(ctx, "email-imap: fetch", slog.String("err", err.Error()))
 	}
-	if highestSeen > uint32(mb.IMAPLastSeenUID) {
+	if highestSeen > uint32(mb.IMAPLastSeenUID) { //nolint:gosec // IMAP UIDs are 32-bit non-negative
 		if err := p.Store.AdvanceIMAPCheckpoint(ctx, mb.ID, int64(highestSeen)); err != nil {
 			return fmt.Errorf("checkpoint: %w", err)
 		}

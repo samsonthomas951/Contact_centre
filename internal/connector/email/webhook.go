@@ -142,7 +142,7 @@ func (h *WebhookHandler) handleMailgun(w http.ResponseWriter, r *http.Request) {
 		// header copy; synthesise one keyed on token so dedupe works.
 		in.MessageID = "<mailgun-" + tok + "@unknown>"
 	}
-	h.publish(w, r.Context(), in)
+	h.publish(r.Context(), w, in)
 }
 
 // handleJSON consumes the documented hand-rolled shape. Body is
@@ -236,10 +236,10 @@ func (h *WebhookHandler) handleJSON(w http.ResponseWriter, r *http.Request) {
 		References:  body.References,
 		OccurredAt:  occ,
 	}
-	h.publish(w, r.Context(), in)
+	h.publish(r.Context(), w, in)
 }
 
-func (h *WebhookHandler) publish(w http.ResponseWriter, ctx context.Context, in InboundEmail) {
+func (h *WebhookHandler) publish(ctx context.Context, w http.ResponseWriter, in InboundEmail) {
 	fresh, err := h.Store.RecordWebhookSeen(ctx, in.MailboxID, in.MessageID)
 	if err != nil {
 		http.Error(w, "dedupe", http.StatusInternalServerError)

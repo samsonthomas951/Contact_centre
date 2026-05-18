@@ -209,7 +209,7 @@ func readCapped(r io.Reader, limit int) ([]byte, error) {
 // which helps lifecycle scans without an index.
 func buildKey(tenant uuid.UUID) string {
 	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(time.Now().UnixMilli()))
+	binary.BigEndian.PutUint64(b[:], uint64(time.Now().UnixMilli())) //nolint:gosec // UnixMilli is non-negative
 	var rnd [4]byte
 	_, _ = rand.Read(rnd[:])
 	return fmt.Sprintf("%s/%s-%s.bin", tenant, hex.EncodeToString(b[:]), hex.EncodeToString(rnd[:]))

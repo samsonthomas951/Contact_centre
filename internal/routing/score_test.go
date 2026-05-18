@@ -10,12 +10,12 @@ import (
 // fixedTime is the test "now" so freshness math is deterministic.
 var fixedTime = time.Date(2026, 5, 14, 10, 0, 0, 0, time.UTC)
 
-func newAgent(id string, status string, load, max int16, skills []string, lastAssigned time.Time) Agent {
+func newAgent(id string, status string, load, maxConcurrent int16, skills []string, lastAssigned time.Time) Agent {
 	return Agent{
 		ID:            uuid.MustParse(id),
 		Status:        status,
 		CurrentLoad:   load,
-		MaxConcurrent: max,
+		MaxConcurrent: maxConcurrent,
 		Skills:        skills,
 		LastAssigned:  lastAssigned,
 	}

@@ -75,7 +75,7 @@ func TestSniff_Rejects(t *testing.T) {
 			if err == nil {
 				t.Fatal("want error")
 			}
-			if tc.err != nil && tc.err != ErrContentTypeNotAllowed && tc.err != ErrContentTypeMismatch {
+			if tc.err != nil && !errors.Is(tc.err, ErrContentTypeNotAllowed) && !errors.Is(tc.err, ErrContentTypeMismatch) {
 				if err.Error() != tc.err.Error() {
 					t.Errorf("err = %v, want %v", err, tc.err)
 				}
