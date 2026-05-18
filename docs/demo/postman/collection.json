@@ -905,6 +905,46 @@
           }
         },
         {
+          "name": "Bulk resolve (Ada)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"op\": \"resolve\",\n  \"ticket_ids\": [\"{{ticket_id}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/bulk",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "bulk"]
+            },
+            "description": "Bulk endpoint. Returns {updated, failures}. Per-ticket transition errors are collected, not aborted."
+          }
+        },
+        {
+          "name": "Bulk assign — agent tries cross-assign (expect 403)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{ada_bearer}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"op\": \"assign\",\n  \"agent_id\": \"{{bob_agent_id}}\",\n  \"ticket_ids\": [\"{{ticket_id}}\"]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/v1/tickets/bulk",
+              "host": ["{{base_url}}"],
+              "path": ["v1", "tickets", "bulk"]
+            },
+            "description": "Plain agents can only self-assign. Reassigning others requires supervisor or admin."
+          }
+        },
+        {
           "name": "Filter inbox by tag (?tag=urgent)",
           "request": {
             "method": "GET",

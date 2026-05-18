@@ -22,6 +22,7 @@ func (a *API) Routes() chi.Router {
 	r := chi.NewRouter()
 	r.Get("/", a.list)
 	r.Post("/", a.create)
+	r.Post("/bulk", a.bulk)
 	r.Get("/{id}", a.get)
 	r.Patch("/{id}/state", a.patchState)
 	r.Get("/{id}/messages", a.listMessages)
@@ -245,6 +246,109 @@ func (a *API) listMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"messages": msgs})
+}
+
+// bulk applies one operation across many tickets in a single request.
+//
+//	body: { "op": "resolve"|"close"|"reopen"|"assign"|"unassign",
+//	        "ticket_ids": ["..."], "agent_id": "..." }
+//
+// State transitions go through ChangeState per-ticket so the same
+// transition validation + realtime publishes fire as the single-
+// ticket path. Assign/unassign use a single UPDATE for efficiency
+// since they don't need transition validation.
+//
+// Returns:
+//
+//	{ "updated": N, "failures": [{"id":"...","reason":"..."}] }
+//
+// Partial success is the default: invalid transitions are collected,
+// not aborted, so the agent sees what worked vs what didn't.
+func (a *API) bulk(w http.ResponseWriter, r *http.Request) {
+	id, err := auth.FromContext(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	var body struct {
+		Op        string      `json:"op"`
+		TicketIDs []uuid.UUID `json:"ticket_ids"`
+		AgentID   *uuid.UUID  `json:"agent_id,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if len(body.TicketIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "ticket_ids required")
+		return
+	}
+	// Cap the batch so a single request can't trigger thousands of
+	// state changes. 100 is comfortably above the per-page inbox
+	// limit (currently 50) and the supervisor view (200).
+	if len(body.TicketIDs) > 200 {
+		writeErr(w, http.StatusBadRequest, "batch too large (max 200)")
+		return
+	}
+
+	switch body.Op {
+	case "resolve", "close", "reopen":
+		var to State
+		switch body.Op {
+		case "resolve":
+			to = StateResolved
+		case "close":
+			to = StateClosed
+		case "reopen":
+			to = StateReopened
+		}
+		ok, fails, err := a.Repo.BulkState(r.Context(), id.TenantID, body.TicketIDs, to)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "ticket: bulk state", slog.String("err", err.Error()))
+			writeErr(w, http.StatusInternalServerError, "bulk failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"updated": ok, "failures": fails})
+
+	case "assign":
+		// Reassigning others' work is a supervisor/admin act; agents
+		// can self-assign (gateway-side simplification: if agent_id
+		// equals caller, any role can do it; otherwise require
+		// elevated role).
+		if body.AgentID == nil || *body.AgentID == uuid.Nil {
+			writeErr(w, http.StatusBadRequest, "agent_id required for assign")
+			return
+		}
+		if *body.AgentID != id.AgentID &&
+			!id.HasRole(auth.RoleSupervisor, auth.RoleAdmin) {
+			writeErr(w, http.StatusForbidden,
+				"only supervisor/admin can assign to other agents")
+			return
+		}
+		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, body.AgentID, body.TicketIDs)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "ticket: bulk assign", slog.String("err", err.Error()))
+			writeErr(w, http.StatusInternalServerError, "bulk failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failures": []BulkFailure{}})
+
+	case "unassign":
+		if !id.HasRole(auth.RoleSupervisor, auth.RoleAdmin) {
+			writeErr(w, http.StatusForbidden, "only supervisor/admin can unassign")
+			return
+		}
+		updated, err := a.Repo.BulkAssign(r.Context(), id.TenantID, nil, body.TicketIDs)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "ticket: bulk unassign", slog.String("err", err.Error()))
+			writeErr(w, http.StatusInternalServerError, "bulk failed")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"updated": updated, "failures": []BulkFailure{}})
+
+	default:
+		writeErr(w, http.StatusBadRequest, "unknown op (resolve/close/reopen/assign/unassign)")
+	}
 }
 
 // isClientError flags errors raised by Validate / Transition (which
