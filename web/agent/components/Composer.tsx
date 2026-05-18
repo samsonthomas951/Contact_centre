@@ -214,6 +214,9 @@ export function Composer({ ticketId, cannedReplies }: { ticketId: string; canned
           )}
           <textarea
             ref={textareaRef}
+            // Stable selector so the ticket-page keyboard shortcut
+            // ("r" focuses reply) can find this textarea.
+            data-composer-textarea
             value={body}
             onChange={(e) => {
               setBody(e.target.value);

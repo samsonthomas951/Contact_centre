@@ -6,6 +6,7 @@ import { Composer } from "@/components/Composer";
 import { MessageThread } from "@/components/MessageThread";
 import { TicketHeader } from "@/components/TicketHeader";
 import { CustomerSidebar } from "@/components/CustomerSidebar";
+import { TicketShortcuts } from "@/components/TicketShortcuts";
 import { loadCannedReplies } from "./actions";
 
 export const dynamic = "force-dynamic";
@@ -64,6 +65,7 @@ export default async function TicketPage({
           </Suspense>
         </div>
         <Composer ticketId={id} cannedReplies={cannedReplies} />
+        <TicketShortcuts ticketId={id} currentState={ticket.state} />
       </div>
       {/* Customer profile column. Suspended so a slow customer fetch
           doesn't delay the thread paint. */}

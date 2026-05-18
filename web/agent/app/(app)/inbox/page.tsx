@@ -2,6 +2,7 @@ import Link from "next/link";
 import { gatewayJSON, GatewayError } from "@/lib/api";
 import { formatRelative, priorityLabel } from "@/lib/format";
 import { FilterBar } from "./FilterBar";
+import { InboxShortcuts } from "@/components/InboxShortcuts";
 
 // Server component. The inbox renders the ticket list at request time
 // with `cache: 'no-store'` -- ticket state changes constantly and the
@@ -50,7 +51,10 @@ export default async function InboxPage({
   return (
     <div className="flex h-screen flex-col">
       <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
-        <h1 className="text-lg font-semibold">Inbox</h1>
+        <div className="flex items-baseline">
+          <h1 className="text-lg font-semibold">Inbox</h1>
+          <InboxShortcuts ticketIds={tickets.map((t) => t.id)} />
+        </div>
         <span className="text-sm text-slate-500">{tickets.length} tickets</span>
       </header>
       <FilterBar />
@@ -92,7 +96,10 @@ function TicketRow({ t }: { t: ListItem }) {
     <li className="border-b border-slate-100">
       <Link
         href={`/tickets/${t.id}`}
-        className="flex items-center gap-3 px-6 py-3 hover:bg-slate-50"
+        // data-ticket-id lets the InboxShortcuts client component
+        // find this row by id so it can focus/scroll it.
+        data-ticket-id={t.id}
+        className="flex items-center gap-3 px-6 py-3 hover:bg-slate-50 focus:bg-slate-100 focus:outline-none"
         prefetch={false}
       >
         <div className={`h-2 w-2 shrink-0 rounded-full ${stateDot(t.state)}`} />

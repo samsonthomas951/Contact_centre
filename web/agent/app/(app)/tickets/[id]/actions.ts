@@ -1,8 +1,8 @@
 "use server";
 
-import { gatewayPost, gatewayUpload } from "@/lib/api";
+import { gatewayPost, gatewayPatch, gatewayUpload } from "@/lib/api";
 import { revalidatePath } from "next/cache";
-import type { Message } from "@/lib/types";
+import type { Message, Ticket } from "@/lib/types";
 
 // sendMessage is the server action the composer calls. The bearer
 // token rides through gatewayPost (server-only); the client never
@@ -19,6 +19,22 @@ export async function sendMessage(
   );
   revalidatePath(`/tickets/${ticketId}`);
   return m;
+}
+
+// changeState moves the ticket to a new state. The gateway enforces
+// which transitions are legal (e.g., resolved → closed allowed,
+// closed → new not). Called by the `e` keyboard shortcut.
+export async function changeState(
+  ticketId: string,
+  to: "open" | "pending" | "resolved" | "closed",
+): Promise<Ticket> {
+  const t = await gatewayPatch<{ to: string }, Ticket>(
+    `/v1/tickets/${ticketId}/state`,
+    { to },
+  );
+  revalidatePath(`/tickets/${ticketId}`);
+  revalidatePath("/inbox");
+  return t;
 }
 
 // UploadedDoc is the minimum the composer needs to render a chip

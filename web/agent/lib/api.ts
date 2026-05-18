@@ -89,6 +89,29 @@ export async function gatewayUpload<T>(path: string, form: FormData): Promise<T>
   return (await res.json()) as T;
 }
 
+// gatewayPatch sends a PATCH with a JSON body. Same shape as
+// gatewayPost; kept distinct so call sites self-document intent.
+export async function gatewayPatch<TIn, TOut>(
+  path: string,
+  body: TIn,
+): Promise<TOut> {
+  const tok = await bearer();
+  const res = await fetch(base() + path, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${tok}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    throw new GatewayError(res.status, `${res.status} ${res.statusText} on ${path}`);
+  }
+  if (res.status === 204) return undefined as TOut;
+  return (await res.json()) as TOut;
+}
+
 // gatewayDelete fires a DELETE and returns nothing on 2xx. Used by the
 // admin pages where the response body has nothing useful to render.
 export async function gatewayDelete(path: string): Promise<void> {
