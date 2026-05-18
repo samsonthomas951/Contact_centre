@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -115,10 +116,16 @@ func TestDispatcher_FanOutThenWorkerDelivers(t *testing.T) {
 	tenant := seedTenant(t, ctx, pool)
 
 	var hits atomic.Int32
-	var lastSig string
+	var (
+		sigMu   sync.Mutex
+		lastSig string
+	)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sig := r.Header.Get(SignatureHeader)
+		sigMu.Lock()
+		lastSig = sig
+		sigMu.Unlock()
 		hits.Add(1)
-		lastSig = r.Header.Get(SignatureHeader)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
@@ -148,8 +155,11 @@ func TestDispatcher_FanOutThenWorkerDelivers(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("expected 1 delivery, got %d", hits.Load())
 	}
-	if want := Sign(body, "shh"); lastSig != want {
-		t.Errorf("X-Signature-256 = %q want %q", lastSig, want)
+	sigMu.Lock()
+	got := lastSig
+	sigMu.Unlock()
+	if want := Sign(body, "shh"); got != want {
+		t.Errorf("X-Signature-256 = %q want %q", got, want)
 	}
 
 	// One row in webhook_deliveries.
