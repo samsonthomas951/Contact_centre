@@ -68,7 +68,7 @@ export function FilterBar({ tags = [] }: { tags?: Tag[] }) {
   const q                = sp.get("q") ?? "";
 
   return (
-    <div className="border-b border-slate-200 bg-white px-6 py-3 space-y-3">
+    <div className="border-b border-slate-200 bg-white px-4 py-3 space-y-3 md:px-6">
       <div className="flex items-center gap-2">
         <input
           key={`q-${q}`}

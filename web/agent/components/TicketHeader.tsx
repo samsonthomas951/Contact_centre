@@ -5,7 +5,7 @@ import { priorityLabel, formatRelative } from "@/lib/format";
 // and ships zero JS for itself.
 export function TicketHeader({ ticket }: { ticket: Ticket }) {
   return (
-    <header className="border-b border-slate-200 px-6 py-3">
+    <header className="border-b border-slate-200 px-4 py-3 md:px-6">
       <div className="flex items-center gap-3">
         <h1 className="font-semibold">Ticket {ticket.id.slice(0, 8)}</h1>
         <Badge>{ticket.state}</Badge>

@@ -36,14 +36,14 @@ export async function CustomerSidebar({ ticketId }: { ticketId: string }) {
     // Swallow -- the main ticket view stays usable even if the
     // sidebar can't load. We render a tiny placeholder instead.
     return (
-      <aside className="border-l border-slate-200 bg-slate-50 p-4 text-xs text-slate-500">
+      <aside className="border-t border-slate-200 bg-slate-50 p-4 text-xs text-slate-500 md:border-l md:border-t-0">
         Couldn&apos;t load customer info.
       </aside>
     );
   }
 
   return (
-    <aside className="w-72 shrink-0 overflow-y-auto border-l border-slate-200 bg-slate-50 p-4 text-sm">
+    <aside className="w-full shrink-0 overflow-y-auto border-t border-slate-200 bg-slate-50 p-4 text-sm md:w-72 md:border-l md:border-t-0">
       <h2 className="text-base font-semibold text-slate-900">{profile.display_name || "Unknown"}</h2>
       {profile.email && <div className="mt-0.5 truncate text-xs text-slate-600">{profile.email}</div>}
       {profile.phone && <div className="text-xs text-slate-600">{profile.phone}</div>}

@@ -66,18 +66,20 @@ export default async function TicketPage({
   ]);
 
   return (
-    <div className="flex h-screen">
-      {/* Thread + composer column */}
-      <div className="flex flex-1 flex-col bg-white">
+    <div className="flex min-h-screen flex-col md:h-screen md:flex-row">
+      {/* Thread + composer column. On mobile this fills the viewport
+          and the customer sidebar stacks below. On md+ it's the
+          left column of a flex row. */}
+      <div className="flex min-h-0 flex-1 flex-col bg-white">
         <TicketHeader ticket={ticket} />
-        <div className="border-b border-slate-200 px-6 py-2">
+        <div className="border-b border-slate-200 px-4 py-2 md:px-6">
           <TicketTags
             ticketId={id}
             attached={tags.attached}
             available={tags.available}
           />
         </div>
-        <div className="flex-1 overflow-auto px-6 py-4">
+        <div className="flex-1 overflow-auto px-4 py-4 md:px-6">
           <Suspense fallback={<MessageSkeleton />}>
             <MessageThreadAsync messagesPromise={messagesPromise} />
           </Suspense>
@@ -96,7 +98,7 @@ export default async function TicketPage({
 
 function SidebarSkeleton() {
   return (
-    <aside className="w-72 shrink-0 border-l border-slate-200 bg-slate-50 p-4">
+    <aside className="w-full shrink-0 border-t border-slate-200 bg-slate-50 p-4 md:w-72 md:border-l md:border-t-0">
       <div className="h-4 w-32 animate-pulse rounded bg-slate-200" />
       <div className="mt-2 h-3 w-40 animate-pulse rounded bg-slate-200" />
       <div className="mt-6 h-3 w-20 animate-pulse rounded bg-slate-200" />

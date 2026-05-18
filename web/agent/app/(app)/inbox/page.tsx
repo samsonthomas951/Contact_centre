@@ -88,7 +88,7 @@ export default async function InboxPage({
 
   return (
     <div className="flex h-screen flex-col">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-3">
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:px-6">
         <div className="flex items-baseline">
           <h1 className="text-lg font-semibold">Inbox</h1>
           <InboxShortcuts ticketIds={tickets.map((t) => t.id)} />
@@ -141,7 +141,7 @@ function TicketRow({ t }: { t: ListItem }) {
       {/* Plain HTML checkbox; the InboxBulkBar listens at the
           window level for change events and keeps the selection
           set itself, so no per-row React state. */}
-      <label className="flex shrink-0 items-center pl-6 pr-2 py-3">
+      <label className="flex shrink-0 items-center pl-4 pr-2 py-3 md:pl-6">
         <input
           type="checkbox"
           data-ticket-select
@@ -154,7 +154,7 @@ function TicketRow({ t }: { t: ListItem }) {
         // data-ticket-id lets the InboxShortcuts client component
         // find this row by id so it can focus/scroll it.
         data-ticket-id={t.id}
-        className="flex flex-1 items-center gap-3 pr-6 py-3 hover:bg-slate-50 focus:bg-slate-100 focus:outline-none"
+        className="flex flex-1 items-center gap-3 pr-4 py-3 hover:bg-slate-50 focus:bg-slate-100 focus:outline-none md:pr-6"
         prefetch={false}
       >
         <div className={`h-2 w-2 shrink-0 rounded-full ${stateDot(t.state)}`} />
