@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import type { Tag } from "@/lib/types";
 import {
@@ -67,25 +67,42 @@ export function InboxBulkBar({
     return () => document.removeEventListener("change", onChange);
   }, []);
 
-  // After a refresh the checkboxes reset to unchecked; sync the
-  // selection set by pruning IDs no longer in the DOM. We avoid
-  // re-checking the boxes -- the agent's choice is "done with that
-  // batch, start a fresh one".
-  useEffect(() => {
+  // Reconcile selection ↔ DOM on every render. Two directions:
+  //
+  //   Set -> DOM   re-apply the `checked` attribute on every row
+  //                whose value is in the Set, so a router.refresh()
+  //                from an inbound WS frame doesn't visually drop
+  //                the agent's selection. The agent's intent is the
+  //                source of truth; the freshly-rendered HTML is
+  //                stale by definition.
+  //   DOM -> Set   prune any id no longer present (the row was
+  //                resolved/reassigned-away/filtered-out by the
+  //                refresh) so the count + the next bulk action
+  //                target match what the agent actually sees.
+  //
+  // useLayoutEffect runs synchronously after DOM updates so the
+  // re-check happens before paint -- no flicker.
+  useLayoutEffect(() => {
+    const present = new Set<string>();
+    document
+      .querySelectorAll<HTMLInputElement>("[data-ticket-select]")
+      .forEach((el) => {
+        present.add(el.value);
+        const want = selected.has(el.value);
+        if (el.checked !== want) el.checked = want;
+      });
+
+    // Set -> Set diff: drop ids that vanished from the DOM. Only
+    // touch state when we actually need to so we don't loop.
     if (selected.size === 0) return;
-    const present = new Set(
-      Array.from(document.querySelectorAll<HTMLInputElement>("[data-ticket-select]")).map(
-        (el) => el.value,
-      ),
-    );
-    let drop = false;
+    let pruned = false;
     for (const id of selected) {
       if (!present.has(id)) {
-        drop = true;
+        pruned = true;
         break;
       }
     }
-    if (drop) {
+    if (pruned) {
       setSelected((prev) => {
         const next = new Set<string>();
         for (const id of prev) if (present.has(id)) next.add(id);
