@@ -3,7 +3,7 @@ module github.com/samsonthomas951/contact-centre
 go 1.25.0
 
 require (
-	github.com/coder/websocket v1.8.14
+	github.com/coder/websocket v1.8.15
 	github.com/coreos/go-oidc/v3 v3.18.0
 	github.com/emersion/go-imap v1.2.1
 	github.com/go-chi/chi/v5 v5.2.5
