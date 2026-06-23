@@ -75,7 +75,7 @@ jobs:
           owner_lc=$(echo "${{ env.IMAGE_OWNER }}" | tr '[:upper:]' '[:lower:]')
           echo "name=${{ env.REGISTRY }}/${owner_lc}/contact-centre/${{ matrix.binary }}" >> "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Login to ghcr (push only on main / tag)
         if: github.event_name != 'pull_request'
